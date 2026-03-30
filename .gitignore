@@ -12,6 +12,12 @@ delta-server-darwin-amd64
 delta-server-darwin-arm64
 delta-server-windows-amd64.exe
 
+# Compiled maintenance binary (built locally, not distributed)
+/maintenance
+
+# Session notes / handoff docs (never commit — may contain credentials)
+HANDOFF.md
+
 # Editor / OS
 .DS_Store
 .idea/

@@ -399,12 +399,12 @@ impl DeltaService for DeltaServiceImpl {
             req.table_uri, target_size, req.partition_filter
         );
 
-        let table = deltalake::open_table(&req.table_uri)
-            .await
-            .map_err(internal)?;
-
+        use deltalake::kernel::Action;
+        use deltalake::operations::transaction::{CommitBuilder, CommitProperties};
+        use deltalake::protocol::DeltaOperation;
         use deltalake::schema::partitions::PartitionValue;
         use deltalake::PartitionFilter;
+        use deltalake::storage::object_store::path::Path as OsPath;
 
         let mut partition_filters: Vec<PartitionFilter> = Vec::new();
         if !req.partition_filter.is_empty() {
@@ -421,6 +421,144 @@ impl DeltaService for DeltaServiceImpl {
             }
         }
 
+        let mut table = deltalake::open_table(&req.table_uri)
+            .await
+            .map_err(internal)?;
+
+        // ── Repair DuckDB size=1 bug ─────────────────────────────────────────
+        // DuckDB writes size=1 for every file in the delta log. delta-rs uses
+        // this value to issue parquet range reads (bytes=0-0), which returns a
+        // single byte and fails to parse as parquet.
+        //
+        // Fix: emit Add-only actions (no Remove) with corrected sizes.
+        // Using Remove+Add in the same commit causes delta_kernel to drop the
+        // re-Add (Remove wins), shrinking the table. A newer Add with a later
+        // modification_time supersedes the old Add without needing a Remove.
+        //
+        // Recovery: also scan the previous table version to recover any files
+        // dropped by a prior Remove+Add repair (they will have been "Removed"
+        // from the current snapshot but still exist on S3).
+        {
+            let log_store = table.log_store().clone();
+            let snapshot = table.snapshot().map_err(internal)?.clone();
+
+            // Current active files
+            let mut all_adds: Vec<_> = snapshot.file_actions().map_err(internal)?
+                .into_iter().collect();
+
+            // Recovery: if there's a recent FSCK commit that incorrectly removed
+            // size=1 files via Remove+Add, load the version just before that FSCK
+            // and recover any dropped size=1 files.  This is O(1) version loads
+            // vs scanning all history.
+            if table.version() > 0 {
+                let history = table.history(Some(100)).await.unwrap_or_default();
+                let mut seen_paths: std::collections::HashSet<String> =
+                    all_adds.iter().map(|a| a.path.clone()).collect();
+                let current_count = all_adds.len();
+                for (idx, commit) in history.iter().enumerate() {
+                    let fsck_version = table.version() - idx as i64;
+                    if commit.operation.as_deref() == Some("FSCK") && fsck_version > 0 {
+                        let pre_fsck_version = fsck_version - 1;
+                        if let Ok(pre_fsck) =
+                            deltalake::DeltaTableBuilder::from_uri(&req.table_uri)
+                                .with_version(pre_fsck_version)
+                                .load()
+                                .await
+                        {
+                            if let Ok(pre_snap) = pre_fsck.snapshot() {
+                                if let Ok(pre_adds) = pre_snap.file_actions() {
+                                    if pre_adds.len() > current_count {
+                                        warn!(
+                                            "FSCK at v{} dropped files; loading v{} ({} files) to recover",
+                                            fsck_version, pre_fsck_version, pre_adds.len()
+                                        );
+                                        for add in pre_adds {
+                                            if !seen_paths.contains(&add.path) && add.size < 512 {
+                                                seen_paths.insert(add.path.clone());
+                                                all_adds.push(add);
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        break; // Only handle the most recent FSCK
+                    }
+                }
+            }
+
+            // 512 bytes is the minimum threshold: no valid parquet file is
+            // smaller. This catches size=1 (DuckDB bug) as well as size=2..511
+            // (corrupted metadata from a bad HEAD response or DuckDB variant).
+            let bad_adds: Vec<_> = all_adds
+                .into_iter()
+                .filter(|a| {
+                    if a.size >= 512 {
+                        return false;
+                    }
+                    if partition_filters.is_empty() {
+                        return true;
+                    }
+                    partition_filters.iter().all(|pf| match &pf.value {
+                        PartitionValue::Equal(expected) => a
+                            .partition_values
+                            .get(&pf.key)
+                            .and_then(|v| v.as_ref())
+                            .map(|v| v == expected)
+                            .unwrap_or(false),
+                        _ => true,
+                    })
+                })
+                .collect();
+
+            if !bad_adds.is_empty() {
+                warn!(
+                    "found {} files with size<512 (DuckDB metadata bug), \
+                     repairing sizes before optimize",
+                    bad_adds.len()
+                );
+                let object_store = log_store.object_store();
+                let mut repair_actions: Vec<Action> = Vec::new();
+
+                for add in bad_adds {
+                    let path = OsPath::from(add.path.as_str());
+                    let meta = object_store.head(&path).await.map_err(|e| {
+                        Status::internal(format!("HEAD {} failed: {e}", add.path))
+                    })?;
+                    let real_size = meta.size as i64;
+                    // Guard: if the HEAD response is also too small, the
+                    // network may have returned a malformed response. Skip
+                    // this file rather than committing a still-wrong size.
+                    if real_size < 512 {
+                        warn!(
+                            "HEAD returned suspicious size {} for {}, skipping",
+                            real_size, add.path
+                        );
+                        continue;
+                    }
+
+                    let mut corrected = add;
+                    corrected.size = real_size;
+                    corrected.modification_time = Utc::now().timestamp_millis();
+                    corrected.data_change = false;
+                    repair_actions.push(Action::Add(corrected));
+                }
+
+                CommitBuilder::from(CommitProperties::default())
+                    .with_actions(repair_actions)
+                    .build(
+                        Some(&snapshot),
+                        log_store,
+                        DeltaOperation::FileSystemCheck {},
+                    )
+                    .await
+                    .map_err(internal)?;
+
+                table.load().await.map_err(internal)?;
+            }
+        }
+
+        // ── Run optimize with corrected metadata ─────────────────────────────
         let base = DeltaOps(table).optimize().with_target_size(target_size);
         let builder = if !partition_filters.is_empty() {
             base.with_filters(&partition_filters)

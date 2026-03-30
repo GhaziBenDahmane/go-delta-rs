@@ -4,6 +4,8 @@ use std::net::SocketAddr;
 use tonic::transport::Server;
 use tracing::info;
 
+use deltalake_aws::register_handlers;
+
 pub mod delta_proto {
     tonic::include_proto!("delta");
 }
@@ -20,6 +22,8 @@ async fn main() -> anyhow::Result<()> {
         )
         .init();
 
+    register_handlers(None);
+
     let port: u16 = std::env::var("DELTA_SERVER_PORT")
         .ok()
         .and_then(|p| p.parse().ok())
@@ -30,8 +34,12 @@ async fn main() -> anyhow::Result<()> {
 
     info!("delta-server listening on {addr}");
 
+    const MAX_MSG: usize = 256 * 1024 * 1024;
+    let svc_with_limits = DeltaServiceServer::new(svc)
+        .max_decoding_message_size(MAX_MSG)
+        .max_encoding_message_size(MAX_MSG);
     Server::builder()
-        .add_service(DeltaServiceServer::new(svc))
+        .add_service(svc_with_limits)
         .serve(addr)
         .await?;
 

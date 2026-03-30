@@ -8,7 +8,8 @@ name = "delta-server"
 path = "src/main.rs"
 
 [dependencies]
-deltalake = { version = "0.22", features = ["datafusion"] }
+deltalake = { version = "0.22", features = ["datafusion", "s3"] }
+deltalake-aws = "0.5"
 tonic = "0.12"
 prost = "0.13"
 tokio = { version = "1", features = ["full"] }
