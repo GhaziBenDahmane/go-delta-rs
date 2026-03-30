@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"runtime/debug"
@@ -84,18 +85,30 @@ func cachedBinaryPath() (string, error) {
 	return filepath.Join(dir, "go-delta-rs", moduleVersion(), name), nil
 }
 
-// EnsureBinary returns the path to the delta-server binary, downloading it
-// from GitHub Releases if it is not already cached on this machine.
+// EnsureBinary returns the path to the delta-server binary using this resolution order:
 //
-// The binary is cached in the user's cache directory and reused on subsequent
-// calls. A SHA-256 checksum is verified after every download.
+//  1. $DELTA_SERVER_PATH env var — explicit override (useful in Docker/CI)
+//  2. "delta-server" on $PATH — picks up system-installed binary automatically
+//  3. OS cache directory — binary downloaded in a previous run
+//  4. GitHub Releases download — first run; verified with SHA-256, then cached
 func EnsureBinary() (string, error) {
+	// 1. Explicit env var override.
+	if p := os.Getenv("DELTA_SERVER_PATH"); p != "" {
+		return p, nil
+	}
+
+	// 2. Binary already on PATH (e.g. /usr/local/bin/delta-server in Docker).
+	if p, err := exec.LookPath("delta-server"); err == nil {
+		return p, nil
+	}
+
+	// 3. Previously cached download.
 	dest, err := cachedBinaryPath()
 	if err != nil {
 		return "", err
 	}
 	if _, err := os.Stat(dest); err == nil {
-		return dest, nil // already cached
+		return dest, nil
 	}
 
 	artifact, err := platformArtifact()

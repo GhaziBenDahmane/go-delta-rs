@@ -127,6 +127,46 @@ Every subsequent run uses the cached binary — no network access needed.
 | macOS | amd64 (Intel), arm64 (Apple Silicon) |
 | Windows | amd64 |
 
+### Docker
+
+The binary is resolved in this order on every `Start()` call:
+
+1. `DELTA_SERVER_PATH` env var — explicit path override
+2. `delta-server` on `$PATH` — system-installed binary
+3. OS cache directory (`~/.cache/go-delta-rs/`) — previously downloaded
+4. GitHub Releases download — first run only, then cached
+
+For Docker, pre-install during `docker build` so containers never download at runtime:
+
+**Option A — use the `setup` command (recommended, Docker layer-cached):**
+
+```dockerfile
+FROM golang:1.21 AS builder
+WORKDIR /app
+COPY go.mod go.sum ./
+RUN go mod download
+# Downloads delta-server into the OS cache during docker build.
+# This layer is rebuilt only when the module version changes.
+RUN go run github.com/ghazibendahmane/go-delta-rs/cmd/setup@v0.1.0
+COPY . .
+RUN go build -o app .
+
+FROM debian:bookworm-slim
+COPY --from=builder /root/.cache/go-delta-rs /root/.cache/go-delta-rs
+COPY --from=builder /app/app .
+CMD ["./app"]
+```
+
+**Option B — install to `/usr/local/bin` (simplest, no config needed):**
+
+```dockerfile
+RUN curl -fsSL \
+  https://github.com/ghazibendahmane/go-delta-rs/releases/latest/download/delta-server-linux-amd64 \
+  -o /usr/local/bin/delta-server && chmod +x /usr/local/bin/delta-server
+```
+
+The binary on `$PATH` is found automatically — no `BinaryPath` config needed in your Go code.
+
 ### Build from source (optional)
 
 If your platform is not listed above or you prefer to compile yourself:
