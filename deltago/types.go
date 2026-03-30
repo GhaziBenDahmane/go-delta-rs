@@ -38,6 +38,22 @@ type CommitInfo struct {
 // Row is a single table row represented as a map of column name → value.
 type Row = map[string]any
 
+// OptimizeOptions controls file compaction behaviour.
+type OptimizeOptions struct {
+	// TargetSizeBytes is the desired output file size. 0 = server default (256 MiB).
+	TargetSizeBytes int64
+	// PartitionFilter selects a single partition in "key=value" format,
+	// e.g. "year_month=2026-02". Empty = optimize all partitions.
+	PartitionFilter string
+}
+
+// OptimizeResult holds the metrics returned by an Optimize call.
+type OptimizeResult struct {
+	FilesAdded          int64
+	FilesRemoved        int64
+	PartitionsOptimized int64
+}
+
 // MarshalRows serialises a slice of Row to a JSON array string.
 func MarshalRows(rows []Row) (string, error) {
 	b, err := json.Marshal(rows)

@@ -3,6 +3,7 @@ package deltago
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"net"
 	"os"
 	"os/exec"
@@ -14,17 +15,19 @@ import (
 	"google.golang.org/grpc/credentials/insecure"
 )
 
+const grpcMaxMsgSize = 256 * 1024 * 1024 // 256 MiB
+
 // StorageConfig holds credentials and endpoint configuration for cloud storage.
 // All fields are optional — unset fields fall back to the standard environment
 // variables for each provider (AWS credential chain, GOOGLE_APPLICATION_CREDENTIALS, etc.).
 type StorageConfig struct {
-	// --- S3 / S3-compatible (MinIO, Localstack, Ceph, Tigris, …) ---
+	// --- S3 / S3-compatible (MinIO, Localstack, Ceph, Dell ECS, …) ---
 
 	// S3Endpoint overrides the default AWS endpoint URL.
 	// Set this to use any S3-compatible storage:
-	//   "http://localhost:9000"       → MinIO (local)
-	//   "http://localhost:4566"       → Localstack
-	//   "https://fly.storage.tigris.dev" → Tigris
+	//   "http://localhost:9000"              → MinIO (local)
+	//   "http://localhost:4566"              → Localstack
+	//   "https://vip-ecs.example.com"        → Dell ECS or Ceph
 	S3Endpoint string
 
 	// S3AllowHTTP allows plain HTTP connections. Required for local MinIO or
@@ -40,10 +43,10 @@ type StorageConfig struct {
 	// S3Region overrides AWS_DEFAULT_REGION.
 	S3Region string
 
-	// S3ForcePathStyle forces path-style S3 URLs (s3.endpoint/bucket/key)
-	// instead of virtual-hosted-style (bucket.s3.endpoint/key).
-	// Required for MinIO and most self-hosted S3-compatible stores.
-	S3ForcePathStyle bool
+	// S3AllowUnsafeRename disables atomic rename checks required by delta-rs
+	// when writing to S3-compatible stores that do not support atomic renames
+	// (e.g. Dell ECS, MinIO, Ceph). Set this to true for any non-AWS S3 target.
+	S3AllowUnsafeRename bool
 }
 
 // SidecarOptions configures how the sidecar process is launched.
@@ -65,17 +68,19 @@ type SidecarOptions struct {
 	Env []string
 
 	// StartTimeout is how long to wait for the sidecar to become healthy.
-	// Defaults to 10 seconds.
+	// Defaults to 30 seconds.
 	StartTimeout time.Duration
 }
 
 // Sidecar manages the lifetime of the delta-server subprocess.
 type Sidecar struct {
-	opts   SidecarOptions
-	port   int
-	cmd    *exec.Cmd
-	conn   *grpc.ClientConn
-	client deltapb.DeltaServiceClient
+	opts       SidecarOptions
+	port       int
+	binaryPath string
+	cmd        *exec.Cmd
+	conn       *grpc.ClientConn
+	client     deltapb.DeltaServiceClient
+	stopCh     chan struct{}
 }
 
 // NewSidecar creates a Sidecar but does not start it yet. Call Start.
@@ -83,12 +88,17 @@ func NewSidecar(opts SidecarOptions) *Sidecar {
 	if opts.StartTimeout == 0 {
 		opts.StartTimeout = 30 * time.Second
 	}
-	return &Sidecar{opts: opts}
+	return &Sidecar{
+		opts:   opts,
+		stopCh: make(chan struct{}),
+	}
 }
 
 // Start launches the sidecar process and waits until it is healthy.
 // If BinaryPath is empty, the binary is downloaded automatically from
 // GitHub Releases and cached locally (requires internet access on first run).
+// A monitor goroutine is started to automatically restart the process if it
+// exits unexpectedly.
 func (s *Sidecar) Start(ctx context.Context) error {
 	binaryPath := s.opts.BinaryPath
 	if binaryPath == "" {
@@ -98,6 +108,7 @@ func (s *Sidecar) Start(ctx context.Context) error {
 			return fmt.Errorf("ensure delta-server binary: %w", err)
 		}
 	}
+	s.binaryPath = binaryPath
 
 	port := s.opts.Port
 	if port == 0 {
@@ -109,22 +120,20 @@ func (s *Sidecar) Start(ctx context.Context) error {
 	}
 	s.port = port
 
-	cmd := exec.CommandContext(ctx, binaryPath)
-	cmd.Env = append(os.Environ(), fmt.Sprintf("DELTA_SERVER_PORT=%d", port))
-	cmd.Env = append(cmd.Env, storageEnv(s.opts.Storage)...)
-	cmd.Env = append(cmd.Env, s.opts.Env...)
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-
-	if err := cmd.Start(); err != nil {
-		return fmt.Errorf("start delta-server: %w", err)
+	if err := s.startProcess(); err != nil {
+		return err
 	}
-	s.cmd = cmd
 
 	addr := fmt.Sprintf("127.0.0.1:%d", port)
-	conn, err := grpc.NewClient(addr, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	conn, err := grpc.NewClient(addr,
+		grpc.WithTransportCredentials(insecure.NewCredentials()),
+		grpc.WithDefaultCallOptions(
+			grpc.MaxCallRecvMsgSize(grpcMaxMsgSize),
+			grpc.MaxCallSendMsgSize(grpcMaxMsgSize),
+		),
+	)
 	if err != nil {
-		_ = cmd.Process.Kill()
+		_ = s.cmd.Process.Kill()
 		return fmt.Errorf("grpc dial: %w", err)
 	}
 	s.conn = conn
@@ -134,11 +143,78 @@ func (s *Sidecar) Start(ctx context.Context) error {
 		_ = s.Stop()
 		return err
 	}
+
+	go s.monitor(ctx)
 	return nil
 }
 
+// startProcess launches the delta-server binary. The gRPC connection is reused
+// across restarts — gRPC reconnects automatically when the server comes back up
+// on the same port.
+func (s *Sidecar) startProcess() error {
+	cmd := exec.Command(s.binaryPath)
+	cmd.Env = append(os.Environ(), fmt.Sprintf("DELTA_SERVER_PORT=%d", s.port))
+	cmd.Env = append(cmd.Env, storageEnv(s.opts.Storage)...)
+	cmd.Env = append(cmd.Env, s.opts.Env...)
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	if err := cmd.Start(); err != nil {
+		return fmt.Errorf("start delta-server: %w", err)
+	}
+	s.cmd = cmd
+	return nil
+}
+
+// monitor waits for the process to exit and restarts it unless Stop has been
+// called. The gRPC client connection is preserved across restarts.
+func (s *Sidecar) monitor(ctx context.Context) {
+	for {
+		err := s.cmd.Wait()
+
+		// Check both the stop channel and the context before restarting.
+		select {
+		case <-s.stopCh:
+			return
+		default:
+		}
+		if ctx.Err() != nil {
+			return
+		}
+
+		slog.Error("delta-server exited unexpectedly, restarting",
+			"error", err,
+			"port", s.port,
+		)
+
+		select {
+		case <-s.stopCh:
+			return
+		case <-time.After(500 * time.Millisecond):
+		}
+
+		if err := s.startProcess(); err != nil {
+			slog.Error("delta-server restart failed", "error", err)
+			return
+		}
+
+		if err := s.waitHealthy(ctx); err != nil {
+			slog.Error("delta-server health check failed after restart", "error", err)
+			return
+		}
+
+		slog.Info("delta-server restarted successfully", "port", s.port)
+	}
+}
+
 // Stop shuts down the sidecar process and closes the gRPC connection.
+// Safe to call multiple times.
 func (s *Sidecar) Stop() error {
+	select {
+	case <-s.stopCh:
+		// already stopped
+	default:
+		close(s.stopCh)
+	}
 	if s.conn != nil {
 		_ = s.conn.Close()
 	}
@@ -190,7 +266,7 @@ func storageEnv(cfg StorageConfig) []string {
 	if cfg.S3AllowHTTP {
 		env = append(env, "AWS_ALLOW_HTTP=true")
 	}
-	if cfg.S3ForcePathStyle {
+	if cfg.S3AllowUnsafeRename {
 		env = append(env, "AWS_S3_ALLOW_UNSAFE_RENAME=true")
 	}
 	return env

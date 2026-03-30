@@ -140,6 +140,27 @@ func (c *DeltaClient) ReadAtVersion(ctx context.Context, tableURI string, versio
 	return c.Read(ctx, tableURI, &ReadOptions{Version: strconv.FormatInt(version, 10)})
 }
 
+// Optimize compacts small files in the Delta table into larger ones.
+// targetSizeBytes=0 uses the server default (256 MiB).
+// partitionFilter selects a single partition in "key=value" format,
+// e.g. "year_month=2026-02". Leave empty to optimize all partitions.
+func (c *DeltaClient) Optimize(ctx context.Context, tableURI string, opts *OptimizeOptions) (*OptimizeResult, error) {
+	req := &deltapb.OptimizeRequest{TableUri: tableURI}
+	if opts != nil {
+		req.TargetSizeBytes = opts.TargetSizeBytes
+		req.PartitionFilter = opts.PartitionFilter
+	}
+	resp, err := c.client.Optimize(ctx, req)
+	if err != nil {
+		return nil, err
+	}
+	return &OptimizeResult{
+		FilesAdded:            resp.FilesAdded,
+		FilesRemoved:          resp.FilesRemoved,
+		PartitionsOptimized:   resp.PartitionsOptimized,
+	}, nil
+}
+
 // ── proto conversion helpers ─────────────────────────────────────────────────
 
 func toProtoCols(cols []Column) []*deltapb.ColumnDef {

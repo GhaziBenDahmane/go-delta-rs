@@ -16,8 +16,8 @@ use tracing::{info, warn};
 use crate::delta_proto::{
     delta_service_server::DeltaService, ColumnDef, CommitInfo, CreateTableRequest,
     CreateTableResponse, GetTableInfoRequest, GetTableInfoResponse, HealthRequest, HealthResponse,
-    HistoryRequest, HistoryResponse, ReadRequest, ReadResponse, VacuumRequest, VacuumResponse,
-    WriteRequest, WriteResponse,
+    HistoryRequest, HistoryResponse, OptimizeRequest, OptimizeResponse, ReadRequest, ReadResponse,
+    VacuumRequest, VacuumResponse, WriteRequest, WriteResponse,
 };
 
 // ── helpers ──────────────────────────────────────────────────────────────────
@@ -31,7 +31,9 @@ fn proto_to_arrow_field(col: &ColumnDef) -> Field {
         "float32" | "float" => ArrowType::Float32,
         "float64" | "double" => ArrowType::Float64,
         "boolean" | "bool" => ArrowType::Boolean,
-        "timestamp" => ArrowType::Timestamp(TimeUnit::Microsecond, None),
+        "timestamp" | "timestamptz" => {
+            ArrowType::Timestamp(TimeUnit::Microsecond, Some("UTC".into()))
+        }
         "date" => ArrowType::Date32,
         _ => ArrowType::Utf8,
     };
@@ -47,7 +49,7 @@ fn proto_to_delta_field(col: &ColumnDef) -> StructField {
         "float32" | "float" => DeltaType::Primitive(PrimitiveType::Float),
         "float64" | "double" => DeltaType::Primitive(PrimitiveType::Double),
         "boolean" | "bool" => DeltaType::Primitive(PrimitiveType::Boolean),
-        "timestamp" => DeltaType::Primitive(PrimitiveType::Timestamp),
+        "timestamp" | "timestamptz" => DeltaType::Primitive(PrimitiveType::TimestampNtz),
         "date" => DeltaType::Primitive(PrimitiveType::Date),
         _ => DeltaType::Primitive(PrimitiveType::String),
     };
@@ -184,19 +186,23 @@ impl DeltaService for DeltaServiceImpl {
             .collect::<Vec<_>>()
             .join("\n");
 
-        let mut reader = ReaderBuilder::new(schema_ref)
+        let reader = ReaderBuilder::new(schema_ref)
             .build(Cursor::new(ndjson.as_bytes()))
             .map_err(internal)?;
 
-        let batch = reader
-            .next()
-            .ok_or_else(|| Status::internal("no data after parsing json"))?
-            .map_err(internal)?;
+        let batches: Vec<_> = reader.collect::<Result<_, _>>().map_err(internal)?;
+
+        if batches.is_empty() {
+            return Ok(Response::new(WriteResponse {
+                version: -1,
+                rows_written: 0,
+            }));
+        }
 
         let table = DeltaOps::try_from_uri(&req.table_uri)
             .await
             .map_err(internal)?
-            .write(vec![batch])
+            .write(batches)
             .with_save_mode(save_mode)
             .await
             .map_err(internal)?;
@@ -374,6 +380,60 @@ impl DeltaService for DeltaServiceImpl {
         Ok(Response::new(VacuumResponse {
             deleted_files,
             num_deleted,
+        }))
+    }
+
+    // ── Optimize ──────────────────────────────────────────────────────────────
+    async fn optimize(
+        &self,
+        request: Request<OptimizeRequest>,
+    ) -> Result<Response<OptimizeResponse>, Status> {
+        let req = request.into_inner();
+        let target_size = if req.target_size_bytes > 0 {
+            req.target_size_bytes
+        } else {
+            256 * 1024 * 1024 // 256 MiB
+        };
+        info!(
+            "optimize uri={} target_size={} partition_filter={:?}",
+            req.table_uri, target_size, req.partition_filter
+        );
+
+        let table = deltalake::open_table(&req.table_uri)
+            .await
+            .map_err(internal)?;
+
+        use deltalake::schema::partitions::PartitionValue;
+        use deltalake::PartitionFilter;
+
+        let mut partition_filters: Vec<PartitionFilter> = Vec::new();
+        if !req.partition_filter.is_empty() {
+            if let Some((key, value)) = req.partition_filter.split_once('=') {
+                partition_filters.push(PartitionFilter {
+                    key: key.trim().to_string(),
+                    value: PartitionValue::Equal(value.trim().to_string()),
+                });
+            } else {
+                warn!(
+                    "partition_filter {:?} is not in 'key=value' format — ignored",
+                    req.partition_filter
+                );
+            }
+        }
+
+        let base = DeltaOps(table).optimize().with_target_size(target_size);
+        let builder = if !partition_filters.is_empty() {
+            base.with_filters(&partition_filters)
+        } else {
+            base
+        };
+
+        let (_, metrics) = builder.await.map_err(internal)?;
+
+        Ok(Response::new(OptimizeResponse {
+            files_added: metrics.num_files_added as i64,
+            files_removed: metrics.num_files_removed as i64,
+            partitions_optimized: metrics.partitions_optimized as i64,
         }))
     }
 }

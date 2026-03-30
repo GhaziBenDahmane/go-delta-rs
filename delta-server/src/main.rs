@@ -26,7 +26,7 @@ async fn main() -> anyhow::Result<()> {
         .unwrap_or(50051);
 
     let addr: SocketAddr = format!("0.0.0.0:{port}").parse()?;
-    let svc = DeltaServiceImpl::default();
+    let svc = DeltaServiceImpl;
 
     info!("delta-server listening on {addr}");
 

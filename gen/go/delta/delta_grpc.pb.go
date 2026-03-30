@@ -26,6 +26,7 @@ const (
 	DeltaService_GetTableInfo_FullMethodName = "/delta.DeltaService/GetTableInfo"
 	DeltaService_History_FullMethodName      = "/delta.DeltaService/History"
 	DeltaService_Vacuum_FullMethodName       = "/delta.DeltaService/Vacuum"
+	DeltaService_Optimize_FullMethodName     = "/delta.DeltaService/Optimize"
 )
 
 // DeltaServiceClient is the client API for DeltaService service.
@@ -39,6 +40,7 @@ type DeltaServiceClient interface {
 	GetTableInfo(ctx context.Context, in *GetTableInfoRequest, opts ...grpc.CallOption) (*GetTableInfoResponse, error)
 	History(ctx context.Context, in *HistoryRequest, opts ...grpc.CallOption) (*HistoryResponse, error)
 	Vacuum(ctx context.Context, in *VacuumRequest, opts ...grpc.CallOption) (*VacuumResponse, error)
+	Optimize(ctx context.Context, in *OptimizeRequest, opts ...grpc.CallOption) (*OptimizeResponse, error)
 }
 
 type deltaServiceClient struct {
@@ -119,6 +121,16 @@ func (c *deltaServiceClient) Vacuum(ctx context.Context, in *VacuumRequest, opts
 	return out, nil
 }
 
+func (c *deltaServiceClient) Optimize(ctx context.Context, in *OptimizeRequest, opts ...grpc.CallOption) (*OptimizeResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(OptimizeResponse)
+	err := c.cc.Invoke(ctx, DeltaService_Optimize_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // DeltaServiceServer is the server API for DeltaService service.
 // All implementations must embed UnimplementedDeltaServiceServer
 // for forward compatibility.
@@ -130,6 +142,7 @@ type DeltaServiceServer interface {
 	GetTableInfo(context.Context, *GetTableInfoRequest) (*GetTableInfoResponse, error)
 	History(context.Context, *HistoryRequest) (*HistoryResponse, error)
 	Vacuum(context.Context, *VacuumRequest) (*VacuumResponse, error)
+	Optimize(context.Context, *OptimizeRequest) (*OptimizeResponse, error)
 	mustEmbedUnimplementedDeltaServiceServer()
 }
 
@@ -160,6 +173,9 @@ func (UnimplementedDeltaServiceServer) History(context.Context, *HistoryRequest)
 }
 func (UnimplementedDeltaServiceServer) Vacuum(context.Context, *VacuumRequest) (*VacuumResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method Vacuum not implemented")
+}
+func (UnimplementedDeltaServiceServer) Optimize(context.Context, *OptimizeRequest) (*OptimizeResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method Optimize not implemented")
 }
 func (UnimplementedDeltaServiceServer) mustEmbedUnimplementedDeltaServiceServer() {}
 func (UnimplementedDeltaServiceServer) testEmbeddedByValue()                      {}
@@ -308,6 +324,24 @@ func _DeltaService_Vacuum_Handler(srv interface{}, ctx context.Context, dec func
 	return interceptor(ctx, in, info, handler)
 }
 
+func _DeltaService_Optimize_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(OptimizeRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(DeltaServiceServer).Optimize(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: DeltaService_Optimize_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(DeltaServiceServer).Optimize(ctx, req.(*OptimizeRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // DeltaService_ServiceDesc is the grpc.ServiceDesc for DeltaService service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -342,6 +376,10 @@ var DeltaService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "Vacuum",
 			Handler:    _DeltaService_Vacuum_Handler,
+		},
+		{
+			MethodName: "Optimize",
+			Handler:    _DeltaService_Optimize_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},

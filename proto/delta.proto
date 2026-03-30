@@ -12,6 +12,7 @@ service DeltaService {
   rpc GetTableInfo(GetTableInfoRequest) returns (GetTableInfoResponse);
   rpc History(HistoryRequest) returns (HistoryResponse);
   rpc Vacuum(VacuumRequest) returns (VacuumResponse);
+  rpc Optimize(OptimizeRequest) returns (OptimizeResponse);
 }
 
 // ---------- Health ----------
@@ -112,6 +113,24 @@ message CommitInfo {
 
 message HistoryResponse {
   repeated CommitInfo commits = 1;
+}
+
+// ---------- Optimize ----------
+
+message OptimizeRequest {
+  string table_uri = 1;
+  // Target file size in bytes. 0 = use default (256 MiB).
+  int64 target_size_bytes = 2;
+  // Optional equality partition filter in "key=value" format,
+  // e.g. "year_month=2026-02". Only files in the matching partition
+  // are compacted. Leave empty to optimize all partitions.
+  string partition_filter = 3;
+}
+
+message OptimizeResponse {
+  int64 files_added = 1;
+  int64 files_removed = 2;
+  int64 partitions_optimized = 3;
 }
 
 // ---------- Vacuum ----------

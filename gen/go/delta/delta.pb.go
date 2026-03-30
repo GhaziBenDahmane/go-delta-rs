@@ -815,6 +815,130 @@ func (x *HistoryResponse) GetCommits() []*CommitInfo {
 	return nil
 }
 
+type OptimizeRequest struct {
+	state    protoimpl.MessageState `protogen:"open.v1"`
+	TableUri string                 `protobuf:"bytes,1,opt,name=table_uri,json=tableUri,proto3" json:"table_uri,omitempty"`
+	// Target file size in bytes. 0 = use default (256 MiB).
+	TargetSizeBytes int64 `protobuf:"varint,2,opt,name=target_size_bytes,json=targetSizeBytes,proto3" json:"target_size_bytes,omitempty"`
+	// Optional equality partition filter in "key=value" format,
+	// e.g. "year_month=2026-02". Only files in the matching partition
+	// are compacted. Leave empty to optimize all partitions.
+	PartitionFilter string `protobuf:"bytes,3,opt,name=partition_filter,json=partitionFilter,proto3" json:"partition_filter,omitempty"`
+	unknownFields   protoimpl.UnknownFields
+	sizeCache       protoimpl.SizeCache
+}
+
+func (x *OptimizeRequest) Reset() {
+	*x = OptimizeRequest{}
+	mi := &file_delta_proto_msgTypes[14]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *OptimizeRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*OptimizeRequest) ProtoMessage() {}
+
+func (x *OptimizeRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_delta_proto_msgTypes[14]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use OptimizeRequest.ProtoReflect.Descriptor instead.
+func (*OptimizeRequest) Descriptor() ([]byte, []int) {
+	return file_delta_proto_rawDescGZIP(), []int{14}
+}
+
+func (x *OptimizeRequest) GetTableUri() string {
+	if x != nil {
+		return x.TableUri
+	}
+	return ""
+}
+
+func (x *OptimizeRequest) GetTargetSizeBytes() int64 {
+	if x != nil {
+		return x.TargetSizeBytes
+	}
+	return 0
+}
+
+func (x *OptimizeRequest) GetPartitionFilter() string {
+	if x != nil {
+		return x.PartitionFilter
+	}
+	return ""
+}
+
+type OptimizeResponse struct {
+	state               protoimpl.MessageState `protogen:"open.v1"`
+	FilesAdded          int64                  `protobuf:"varint,1,opt,name=files_added,json=filesAdded,proto3" json:"files_added,omitempty"`
+	FilesRemoved        int64                  `protobuf:"varint,2,opt,name=files_removed,json=filesRemoved,proto3" json:"files_removed,omitempty"`
+	PartitionsOptimized int64                  `protobuf:"varint,3,opt,name=partitions_optimized,json=partitionsOptimized,proto3" json:"partitions_optimized,omitempty"`
+	unknownFields       protoimpl.UnknownFields
+	sizeCache           protoimpl.SizeCache
+}
+
+func (x *OptimizeResponse) Reset() {
+	*x = OptimizeResponse{}
+	mi := &file_delta_proto_msgTypes[15]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *OptimizeResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*OptimizeResponse) ProtoMessage() {}
+
+func (x *OptimizeResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_delta_proto_msgTypes[15]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use OptimizeResponse.ProtoReflect.Descriptor instead.
+func (*OptimizeResponse) Descriptor() ([]byte, []int) {
+	return file_delta_proto_rawDescGZIP(), []int{15}
+}
+
+func (x *OptimizeResponse) GetFilesAdded() int64 {
+	if x != nil {
+		return x.FilesAdded
+	}
+	return 0
+}
+
+func (x *OptimizeResponse) GetFilesRemoved() int64 {
+	if x != nil {
+		return x.FilesRemoved
+	}
+	return 0
+}
+
+func (x *OptimizeResponse) GetPartitionsOptimized() int64 {
+	if x != nil {
+		return x.PartitionsOptimized
+	}
+	return 0
+}
+
 type VacuumRequest struct {
 	state    protoimpl.MessageState `protogen:"open.v1"`
 	TableUri string                 `protobuf:"bytes,1,opt,name=table_uri,json=tableUri,proto3" json:"table_uri,omitempty"`
@@ -827,7 +951,7 @@ type VacuumRequest struct {
 
 func (x *VacuumRequest) Reset() {
 	*x = VacuumRequest{}
-	mi := &file_delta_proto_msgTypes[14]
+	mi := &file_delta_proto_msgTypes[16]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -839,7 +963,7 @@ func (x *VacuumRequest) String() string {
 func (*VacuumRequest) ProtoMessage() {}
 
 func (x *VacuumRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_delta_proto_msgTypes[14]
+	mi := &file_delta_proto_msgTypes[16]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -852,7 +976,7 @@ func (x *VacuumRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use VacuumRequest.ProtoReflect.Descriptor instead.
 func (*VacuumRequest) Descriptor() ([]byte, []int) {
-	return file_delta_proto_rawDescGZIP(), []int{14}
+	return file_delta_proto_rawDescGZIP(), []int{16}
 }
 
 func (x *VacuumRequest) GetTableUri() string {
@@ -886,7 +1010,7 @@ type VacuumResponse struct {
 
 func (x *VacuumResponse) Reset() {
 	*x = VacuumResponse{}
-	mi := &file_delta_proto_msgTypes[15]
+	mi := &file_delta_proto_msgTypes[17]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -898,7 +1022,7 @@ func (x *VacuumResponse) String() string {
 func (*VacuumResponse) ProtoMessage() {}
 
 func (x *VacuumResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_delta_proto_msgTypes[15]
+	mi := &file_delta_proto_msgTypes[17]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -911,7 +1035,7 @@ func (x *VacuumResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use VacuumResponse.ProtoReflect.Descriptor instead.
 func (*VacuumResponse) Descriptor() ([]byte, []int) {
-	return file_delta_proto_rawDescGZIP(), []int{15}
+	return file_delta_proto_rawDescGZIP(), []int{17}
 }
 
 func (x *VacuumResponse) GetDeletedFiles() []string {
@@ -982,7 +1106,16 @@ const file_delta_proto_rawDesc = "" +
 	"\toperation\x18\x03 \x01(\tR\toperation\x121\n" +
 	"\x14operation_parameters\x18\x04 \x01(\tR\x13operationParameters\">\n" +
 	"\x0fHistoryResponse\x12+\n" +
-	"\acommits\x18\x01 \x03(\v2\x11.delta.CommitInfoR\acommits\"n\n" +
+	"\acommits\x18\x01 \x03(\v2\x11.delta.CommitInfoR\acommits\"\x85\x01\n" +
+	"\x0fOptimizeRequest\x12\x1b\n" +
+	"\ttable_uri\x18\x01 \x01(\tR\btableUri\x12*\n" +
+	"\x11target_size_bytes\x18\x02 \x01(\x03R\x0ftargetSizeBytes\x12)\n" +
+	"\x10partition_filter\x18\x03 \x01(\tR\x0fpartitionFilter\"\x8b\x01\n" +
+	"\x10OptimizeResponse\x12\x1f\n" +
+	"\vfiles_added\x18\x01 \x01(\x03R\n" +
+	"filesAdded\x12#\n" +
+	"\rfiles_removed\x18\x02 \x01(\x03R\ffilesRemoved\x121\n" +
+	"\x14partitions_optimized\x18\x03 \x01(\x03R\x13partitionsOptimized\"n\n" +
 	"\rVacuumRequest\x12\x1b\n" +
 	"\ttable_uri\x18\x01 \x01(\tR\btableUri\x12'\n" +
 	"\x0fretention_hours\x18\x02 \x01(\x02R\x0eretentionHours\x12\x17\n" +
@@ -990,7 +1123,7 @@ const file_delta_proto_rawDesc = "" +
 	"\x0eVacuumResponse\x12#\n" +
 	"\rdeleted_files\x18\x01 \x03(\tR\fdeletedFiles\x12\x1f\n" +
 	"\vnum_deleted\x18\x02 \x01(\x03R\n" +
-	"numDeleted2\xaa\x03\n" +
+	"numDeleted2\xe7\x03\n" +
 	"\fDeltaService\x125\n" +
 	"\x06Health\x12\x14.delta.HealthRequest\x1a\x15.delta.HealthResponse\x12D\n" +
 	"\vCreateTable\x12\x19.delta.CreateTableRequest\x1a\x1a.delta.CreateTableResponse\x122\n" +
@@ -998,7 +1131,8 @@ const file_delta_proto_rawDesc = "" +
 	"\x04Read\x12\x12.delta.ReadRequest\x1a\x13.delta.ReadResponse\x12G\n" +
 	"\fGetTableInfo\x12\x1a.delta.GetTableInfoRequest\x1a\x1b.delta.GetTableInfoResponse\x128\n" +
 	"\aHistory\x12\x15.delta.HistoryRequest\x1a\x16.delta.HistoryResponse\x125\n" +
-	"\x06Vacuum\x12\x14.delta.VacuumRequest\x1a\x15.delta.VacuumResponseB5Z3github.com/ghazibendahmane/go-delta-rs/gen/go/deltab\x06proto3"
+	"\x06Vacuum\x12\x14.delta.VacuumRequest\x1a\x15.delta.VacuumResponse\x12;\n" +
+	"\bOptimize\x12\x16.delta.OptimizeRequest\x1a\x17.delta.OptimizeResponseB5Z3github.com/ghazibendahmane/go-delta-rs/gen/go/deltab\x06proto3"
 
 var (
 	file_delta_proto_rawDescOnce sync.Once
@@ -1012,7 +1146,7 @@ func file_delta_proto_rawDescGZIP() []byte {
 	return file_delta_proto_rawDescData
 }
 
-var file_delta_proto_msgTypes = make([]protoimpl.MessageInfo, 16)
+var file_delta_proto_msgTypes = make([]protoimpl.MessageInfo, 18)
 var file_delta_proto_goTypes = []any{
 	(*HealthRequest)(nil),        // 0: delta.HealthRequest
 	(*HealthResponse)(nil),       // 1: delta.HealthResponse
@@ -1028,8 +1162,10 @@ var file_delta_proto_goTypes = []any{
 	(*HistoryRequest)(nil),       // 11: delta.HistoryRequest
 	(*CommitInfo)(nil),           // 12: delta.CommitInfo
 	(*HistoryResponse)(nil),      // 13: delta.HistoryResponse
-	(*VacuumRequest)(nil),        // 14: delta.VacuumRequest
-	(*VacuumResponse)(nil),       // 15: delta.VacuumResponse
+	(*OptimizeRequest)(nil),      // 14: delta.OptimizeRequest
+	(*OptimizeResponse)(nil),     // 15: delta.OptimizeResponse
+	(*VacuumRequest)(nil),        // 16: delta.VacuumRequest
+	(*VacuumResponse)(nil),       // 17: delta.VacuumResponse
 }
 var file_delta_proto_depIdxs = []int32{
 	2,  // 0: delta.CreateTableRequest.schema:type_name -> delta.ColumnDef
@@ -1042,16 +1178,18 @@ var file_delta_proto_depIdxs = []int32{
 	7,  // 7: delta.DeltaService.Read:input_type -> delta.ReadRequest
 	9,  // 8: delta.DeltaService.GetTableInfo:input_type -> delta.GetTableInfoRequest
 	11, // 9: delta.DeltaService.History:input_type -> delta.HistoryRequest
-	14, // 10: delta.DeltaService.Vacuum:input_type -> delta.VacuumRequest
-	1,  // 11: delta.DeltaService.Health:output_type -> delta.HealthResponse
-	4,  // 12: delta.DeltaService.CreateTable:output_type -> delta.CreateTableResponse
-	6,  // 13: delta.DeltaService.Write:output_type -> delta.WriteResponse
-	8,  // 14: delta.DeltaService.Read:output_type -> delta.ReadResponse
-	10, // 15: delta.DeltaService.GetTableInfo:output_type -> delta.GetTableInfoResponse
-	13, // 16: delta.DeltaService.History:output_type -> delta.HistoryResponse
-	15, // 17: delta.DeltaService.Vacuum:output_type -> delta.VacuumResponse
-	11, // [11:18] is the sub-list for method output_type
-	4,  // [4:11] is the sub-list for method input_type
+	16, // 10: delta.DeltaService.Vacuum:input_type -> delta.VacuumRequest
+	14, // 11: delta.DeltaService.Optimize:input_type -> delta.OptimizeRequest
+	1,  // 12: delta.DeltaService.Health:output_type -> delta.HealthResponse
+	4,  // 13: delta.DeltaService.CreateTable:output_type -> delta.CreateTableResponse
+	6,  // 14: delta.DeltaService.Write:output_type -> delta.WriteResponse
+	8,  // 15: delta.DeltaService.Read:output_type -> delta.ReadResponse
+	10, // 16: delta.DeltaService.GetTableInfo:output_type -> delta.GetTableInfoResponse
+	13, // 17: delta.DeltaService.History:output_type -> delta.HistoryResponse
+	17, // 18: delta.DeltaService.Vacuum:output_type -> delta.VacuumResponse
+	15, // 19: delta.DeltaService.Optimize:output_type -> delta.OptimizeResponse
+	12, // [12:20] is the sub-list for method output_type
+	4,  // [4:12] is the sub-list for method input_type
 	4,  // [4:4] is the sub-list for extension type_name
 	4,  // [4:4] is the sub-list for extension extendee
 	0,  // [0:4] is the sub-list for field type_name
@@ -1068,7 +1206,7 @@ func file_delta_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_delta_proto_rawDesc), len(file_delta_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   16,
+			NumMessages:   18,
 			NumExtensions: 0,
 			NumServices:   1,
 		},
