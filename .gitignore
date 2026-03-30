@@ -1,0 +1,19 @@
+# Rust build artefacts
+delta-server/target/
+
+# Go build cache
+*.test
+*.out
+
+# Pre-built binaries downloaded locally (not committed — distributed via GitHub Releases)
+delta-server-linux-amd64
+delta-server-linux-arm64
+delta-server-darwin-amd64
+delta-server-darwin-arm64
+delta-server-windows-amd64.exe
+
+# Editor / OS
+.DS_Store
+.idea/
+.vscode/
+*.swp

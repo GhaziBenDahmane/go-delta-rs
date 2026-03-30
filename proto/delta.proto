@@ -1,0 +1,129 @@
+syntax = "proto3";
+
+package delta;
+
+option go_package = "github.com/ghazibendahmane/go-delta-rs/gen/go/delta";
+
+service DeltaService {
+  rpc Health(HealthRequest) returns (HealthResponse);
+  rpc CreateTable(CreateTableRequest) returns (CreateTableResponse);
+  rpc Write(WriteRequest) returns (WriteResponse);
+  rpc Read(ReadRequest) returns (ReadResponse);
+  rpc GetTableInfo(GetTableInfoRequest) returns (GetTableInfoResponse);
+  rpc History(HistoryRequest) returns (HistoryResponse);
+  rpc Vacuum(VacuumRequest) returns (VacuumResponse);
+}
+
+// ---------- Health ----------
+
+message HealthRequest {}
+
+message HealthResponse {
+  string status = 1;
+  string version = 2;
+}
+
+// ---------- Schema ----------
+
+message ColumnDef {
+  string name = 1;
+  // Supported: string, int32, int64, float32, float64, boolean, timestamp, date
+  string data_type = 2;
+  bool nullable = 3;
+}
+
+// ---------- CreateTable ----------
+
+message CreateTableRequest {
+  string table_uri = 1;
+  repeated ColumnDef schema = 2;
+  repeated string partition_columns = 3;
+}
+
+message CreateTableResponse {
+  bool created = 1;
+  string message = 2;
+}
+
+// ---------- Write ----------
+
+message WriteRequest {
+  string table_uri = 1;
+  // "append" or "overwrite"
+  string mode = 2;
+  // JSON array of row objects, e.g. [{"id":1,"name":"alice"},...]
+  string json_data = 3;
+  // Optional: column definitions needed when writing to a new table.
+  // If omitted the schema is inferred from json_data (all strings).
+  repeated ColumnDef schema = 4;
+}
+
+message WriteResponse {
+  int64 version = 1;
+  int64 rows_written = 2;
+}
+
+// ---------- Read ----------
+
+message ReadRequest {
+  string table_uri = 1;
+  // Optional: read a specific version. Empty = latest.
+  string version = 2;
+  // Optional: SQL WHERE clause applied via DataFusion, e.g. "id > 5"
+  string filter = 3;
+  // 0 = no limit
+  int64 limit = 4;
+}
+
+message ReadResponse {
+  // JSON array of row objects
+  string json_data = 1;
+  int64 num_rows = 2;
+}
+
+// ---------- GetTableInfo ----------
+
+message GetTableInfoRequest {
+  string table_uri = 1;
+}
+
+message GetTableInfoResponse {
+  int64 version = 1;
+  repeated ColumnDef schema = 2;
+  repeated string partition_columns = 3;
+  int64 num_files = 4;
+  string created_time = 5;
+}
+
+// ---------- History ----------
+
+message HistoryRequest {
+  string table_uri = 1;
+  // 0 = all history
+  int32 limit = 2;
+}
+
+message CommitInfo {
+  int64 version = 1;
+  string timestamp = 2;
+  string operation = 3;
+  string operation_parameters = 4;
+}
+
+message HistoryResponse {
+  repeated CommitInfo commits = 1;
+}
+
+// ---------- Vacuum ----------
+
+message VacuumRequest {
+  string table_uri = 1;
+  // Hours of data to retain. Default (0) uses Delta default (168h / 7 days).
+  float retention_hours = 2;
+  bool dry_run = 3;
+}
+
+message VacuumResponse {
+  repeated string deleted_files = 1;
+  int64 num_deleted = 2;
+}
