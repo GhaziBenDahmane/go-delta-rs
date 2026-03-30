@@ -3,8 +3,10 @@
 Go bindings for [Delta Lake](https://delta.io) powered by [delta-rs](https://github.com/delta-io/delta-rs), using a gRPC sidecar.
 
 ```go
+import "github.com/ghazibendahmane/go-delta-rs/deltago"
+
 sidecar := deltago.NewSidecar(deltago.SidecarOptions{
-    BinaryPath: "./delta-server/target/release/delta-server",
+    BinaryPath: "./delta-server",
 })
 sidecar.Start(ctx)
 defer sidecar.Stop()
@@ -27,13 +29,13 @@ This project fills that gap.
 
 **Delta Lake is not just Parquet.** A Delta table is a set of Parquet files governed by a JSON transaction log (`_delta_log/`). Reading `.parquet` files directly gives you stale, potentially corrupt data — no snapshot isolation, no handling of concurrent writes, no awareness of deletions or updates. Any correct Delta reader must implement the full [Delta Protocol](https://github.com/delta-io/delta/blob/master/PROTOCOL.md), which covers checkpoint files, schema evolution, partition pruning, and more. Implementing this correctly from scratch in Go is a substantial, ongoing engineering effort.
 
-**delta-rs is the reference implementation.** Maintained by the Linux Foundation under the Delta.io project, delta-rs is the non-JVM reference implementation of Delta Lake. It powers the official Python, Rust, and (partially) Java bindings. It handles the full protocol, including writes with ACID semantics, time travel, vacuuming, and optimisation. By wrapping delta-rs rather than reimplementing Delta Lake in Go, this project gets correctness for free and automatically inherits upstream improvements.
+**delta-rs is the reference implementation.** Maintained by the Linux Foundation under the Delta.io project, delta-rs is the non-JVM reference implementation of Delta Lake. It powers the official Python, Rust, and Java bindings. It handles the full protocol, including writes with ACID semantics, time travel, vacuuming, and optimisation. By wrapping delta-rs rather than reimplementing Delta Lake in Go, this project gets correctness for free and automatically inherits upstream improvements.
 
 ---
 
 ## Comparison to alternatives
 
-### 1. Pure Go reimplementations (`go-delta`, etc.)
+### 1. Pure Go reimplementations
 
 Several projects have attempted a pure Go Delta Lake implementation. The pattern is consistent: they support basic reads on simple tables, then stall when they hit the full complexity of the protocol — checkpoint files, schema evolution, `MERGE` operations, deletion vectors. As of 2025 none are production-ready for writes.
 
@@ -45,15 +47,30 @@ Several projects have attempted a pure Go Delta Lake implementation. The pattern
 | Actively maintained | ✅ | ❌ Most abandoned |
 | Pure Go client | ✅ | ✅ |
 
-### 2. CGo bindings to delta-rs
+### 2. DuckDB (`go-duckdb` + Delta extension)
 
-The conceptually obvious approach: compile delta-rs as a C shared library (`cdylib`), expose a C ABI, and call it from Go via `cgo`. This works in a proof-of-concept but breaks down in practice:
+DuckDB has a Delta extension that can read Delta tables, and [go-duckdb](https://github.com/marcboeker/go-duckdb) provides Go bindings. This is a viable read path for analytics but has significant limitations:
 
-- **Broken cross-compilation.** `CGO_ENABLED=1` disables `GOOS`/`GOARCH` cross-compilation. You cannot `go build` for `linux/arm64` from a Mac without a full cross-compilation toolchain.
-- **CGo overhead.** Every call across the CGo boundary transitions from a goroutine to an OS thread, adding latency and bypassing Go's scheduler. High-frequency calls are measurably slower.
-- **Deployment complexity.** The shared library (`.so` / `.dylib`) must be present at runtime. Statically linking it into the Go binary is possible but fragile across glibc versions.
-- **Memory safety.** Memory allocated in Rust must be freed by Rust, and vice versa. Ownership across a C ABI is manual and error-prone.
-- **Build friction.** `go get` stops working out of the box. Users need a Rust toolchain at build time *and* a matching shared library at run time.
+- **Read-only for Delta.** DuckDB's Delta extension supports `delta_scan()` for reading but does not write data back as a Delta table.
+- **CGo dependency.** `go-duckdb` is a CGo binding, which breaks cross-compilation and adds deployment complexity.
+- **Not Delta-native.** DuckDB operates on a copy of the data; it has no awareness of Delta transaction semantics when other writers are active.
+
+| | go-delta-rs | DuckDB |
+|---|---|---|
+| Delta writes | ✅ | ❌ Read-only |
+| ACID guarantees | ✅ | ❌ |
+| Pure Go client | ✅ | ❌ CGo |
+| Cross-compilation | ✅ | ❌ |
+| Good for ad-hoc queries | ⚠ SQL via DataFusion | ✅ |
+
+### 3. CGo bindings to delta-rs
+
+The conceptually obvious approach: compile delta-rs as a C shared library and call it from Go via `cgo`. This works in a proof-of-concept but breaks down in practice:
+
+- **Broken cross-compilation.** `CGO_ENABLED=1` disables `GOOS`/`GOARCH` cross-compilation.
+- **CGo overhead.** Every call transitions from a goroutine to an OS thread, adding latency and bypassing Go's scheduler.
+- **Deployment complexity.** The shared library must be present at runtime. Statically linking it is possible but fragile across glibc versions.
+- **Memory safety.** Ownership across a C ABI is manual and error-prone.
 
 | | go-delta-rs | CGo bindings |
 |---|---|---|
@@ -61,25 +78,25 @@ The conceptually obvious approach: compile delta-rs as a C shared library (`cdyl
 | Cross-compilation | ✅ | ❌ |
 | `go get` works | ✅ | ❌ |
 | Process isolation | ✅ | ❌ |
-| Deployment | Single binary + sidecar | Shared lib dependency |
 
-### 3. JVM (delta-io/delta, delta-rs Java bindings)
+### 4. JVM (delta-io/delta, delta-rs Java bindings)
 
-The official Apache Spark Delta Lake implementation is JVM-only. delta-rs also ships Java bindings. Both require a JVM at runtime — not acceptable for most Go infrastructure tooling, CLI utilities, or serverless functions.
+Both the official Spark Delta and delta-rs Java bindings require a JVM at runtime — not acceptable for most Go infrastructure tooling, CLI utilities, or serverless functions.
 
-### 4. Python subprocess
+### 5. Python subprocess
 
-Some teams run a Python process that uses the `deltalake` Python package and communicate over stdin/stdout or a Unix socket. This requires a Python runtime and a virtualenv wherever the Go binary is deployed. Per-call process spawning is prohibitively slow; a persistent subprocess is effectively reinventing the sidecar pattern with worse ergonomics.
+Some teams run a Python process using the `deltalake` Python package and communicate over stdin/stdout or a Unix socket. This requires a Python runtime and virtualenv everywhere the Go binary is deployed.
 
-### 5. Direct Parquet reading
+### 6. Direct Parquet reading
 
-Libraries like `github.com/xitongsys/parquet-go` or the Apache Arrow Go library let you read `.parquet` files directly. This deliberately ignores the Delta transaction log and therefore provides no ACID guarantees, no correct handling of deletes or updates, and stale reads when another writer is active. Acceptable for one-off data exploration; not acceptable for production pipelines.
+Libraries like `github.com/xitongsys/parquet-go` or the Apache Arrow Go library let you read `.parquet` files directly. This deliberately ignores the Delta transaction log — no ACID guarantees, no correct handling of deletes or updates, stale reads during writes.
 
 ### Summary
 
-| Approach | Writes | ACID | Pure Go client | No JVM | Maintained |
+| Approach | Delta writes | ACID | Pure Go client | No JVM | Maintained |
 |---|:---:|:---:|:---:|:---:|:---:|
 | **go-delta-rs (this)** | ✅ | ✅ | ✅ | ✅ | ✅ |
+| DuckDB (go-duckdb) | ❌ read-only | ❌ | ❌ CGo | ✅ | ✅ |
 | Pure Go reimpl | ❌ | ❌ | ✅ | ✅ | ❌ |
 | CGo bindings | ✅ | ✅ | ❌ | ✅ | ❌ |
 | JVM / Spark | ✅ | ✅ | ❌ | ❌ | ✅ |
@@ -88,74 +105,64 @@ Libraries like `github.com/xitongsys/parquet-go` or the Apache Arrow Go library 
 
 ---
 
-## Prerequisites
+## Installation
 
-**To build the sidecar:**
-- [Rust](https://rustup.rs) 1.75 or later
-- `cargo` (included with Rust)
-
-**To use the Go package:**
-- Go 1.21 or later
-
-**To regenerate protobuf stubs** (only needed when modifying `proto/delta.proto`):
-- `protoc` (Protocol Buffers compiler)
-- `protoc-gen-go` and `protoc-gen-go-grpc` (installed automatically by `make generate`)
-
----
-
-## Building
-
-### 1. Build the Rust sidecar
+### 1. Download the sidecar binary
 
 ```bash
-cd delta-server
-cargo build --release
+VERSION=v0.1.0 curl -fsSL \
+  https://raw.githubusercontent.com/ghazibendahmane/go-delta-rs/main/install.sh | bash
 ```
 
-The binary is written to `delta-server/target/release/delta-server`.
-
-This is a one-time step. The resulting binary is self-contained and has no shared library dependencies beyond libc.
-
-### 2. Get the Go package
+Or download manually from the [releases page](https://github.com/ghazibendahmane/go-delta-rs/releases) and make it executable:
 
 ```bash
-go get github.com/YOUR_USERNAME/go-delta-rs/deltago
+# Linux amd64
+curl -L https://github.com/ghazibendahmane/go-delta-rs/releases/latest/download/delta-server-linux-amd64 \
+  -o delta-server && chmod +x delta-server
+
+# macOS Apple Silicon
+curl -L https://github.com/ghazibendahmane/go-delta-rs/releases/latest/download/delta-server-darwin-arm64 \
+  -o delta-server && chmod +x delta-server
 ```
 
-Or clone the repo and use a `replace` directive in your `go.mod` during development.
-
-### 3. (Optional) Regenerate protobuf stubs
-
-Only needed if you change `proto/delta.proto`:
+### 2. Add the Go package
 
 ```bash
-make generate
+go get github.com/ghazibendahmane/go-delta-rs/deltago
+```
+
+### 3. (Optional) Build from source
+
+Requires a [Rust toolchain](https://rustup.rs):
+
+```bash
+git clone https://github.com/ghazibendahmane/go-delta-rs
+cd go-delta-rs/delta-server && cargo build --release
 ```
 
 ---
 
 ## Usage
 
-### Managed sidecar (recommended)
-
-The `Sidecar` type launches and manages the `delta-server` process for you.
+### Basic example
 
 ```go
 package main
 
 import (
     "context"
+    "fmt"
     "log"
 
-    "github.com/YOUR_USERNAME/go-delta-rs/deltago"
+    "github.com/ghazibendahmane/go-delta-rs/deltago"
 )
 
 func main() {
     ctx := context.Background()
 
     sidecar := deltago.NewSidecar(deltago.SidecarOptions{
-        BinaryPath: "./delta-server/target/release/delta-server",
-        // Port: 50051  // omit to pick a free port automatically
+        BinaryPath: "./delta-server",
     })
     if err := sidecar.Start(ctx); err != nil {
         log.Fatal(err)
@@ -164,55 +171,104 @@ func main() {
 
     c := sidecar.Client()
 
-    // --- Create a table ---
     schema := []deltago.Column{
         {Name: "id",    Type: "int64",   Nullable: false},
         {Name: "email", Type: "string",  Nullable: true},
         {Name: "score", Type: "float64", Nullable: true},
     }
-    err := c.CreateTable(ctx, "file:///tmp/users", schema, nil)
 
-    // --- Write rows ---
+    // Create
+    c.CreateTable(ctx, "file:///tmp/users", schema, nil)
+
+    // Write
     rows := []deltago.Row{
         {"id": 1, "email": "alice@example.com", "score": 9.5},
         {"id": 2, "email": "bob@example.com",   "score": 7.2},
     }
-    err = c.Write(ctx, "file:///tmp/users", deltago.WriteAppend, rows, schema)
+    c.Write(ctx, "file:///tmp/users", deltago.WriteAppend, rows, schema)
 
-    // --- Read all rows ---
-    all, err := c.Read(ctx, "file:///tmp/users", nil)
+    // Read all
+    all, _ := c.Read(ctx, "file:///tmp/users", nil)
 
-    // --- Filter with a SQL predicate ---
-    high, err := c.Read(ctx, "file:///tmp/users", &deltago.ReadOptions{
+    // Filter
+    high, _ := c.Read(ctx, "file:///tmp/users", &deltago.ReadOptions{
         Filter: "score > 8.0",
         Limit:  100,
     })
 
-    // --- Read a specific version (time travel) ---
-    old, err := c.ReadAtVersion(ctx, "file:///tmp/users", 0)
+    // Time travel
+    old, _ := c.ReadAtVersion(ctx, "file:///tmp/users", 0)
 
-    // --- Schema and metadata ---
-    info, err := c.GetTableInfo(ctx, "file:///tmp/users")
+    // Metadata
+    info, _ := c.GetTableInfo(ctx, "file:///tmp/users")
     fmt.Printf("version=%d  files=%d\n", info.Version, info.NumFiles)
 
-    // --- Commit history ---
-    history, err := c.History(ctx, "file:///tmp/users", 10)
+    // History
+    history, _ := c.History(ctx, "file:///tmp/users", 10)
+    for _, commit := range history {
+        fmt.Printf("v%d  %s  %s\n", commit.Version, commit.Timestamp, commit.Operation)
+    }
 
-    // --- Vacuum (remove old files) ---
-    deleted, err := c.Vacuum(ctx, "file:///tmp/users", 168, false)
+    // Vacuum
+    c.Vacuum(ctx, "file:///tmp/users", 168, false)
 }
 ```
 
-### External sidecar
+### Amazon S3
 
-If you want to run `delta-server` as a separate container or system service, connect directly:
+```go
+sidecar := deltago.NewSidecar(deltago.SidecarOptions{
+    BinaryPath: "./delta-server",
+    // Credentials fall back to the standard AWS credential chain
+    // (env vars, ~/.aws/credentials, EC2 instance role, ECS task role, etc.)
+})
+sidecar.Start(ctx)
+c := sidecar.Client()
+c.Write(ctx, "s3://my-bucket/events", deltago.WriteAppend, rows, schema)
+```
+
+### S3-compatible storage (MinIO, Localstack, Tigris, Ceph, …)
+
+```go
+sidecar := deltago.NewSidecar(deltago.SidecarOptions{
+    BinaryPath: "./delta-server",
+    Storage: deltago.StorageConfig{
+        S3Endpoint:        "http://localhost:9000",  // MinIO
+        S3AccessKeyID:     "minioadmin",
+        S3SecretAccessKey: "minioadmin",
+        S3Region:          "us-east-1",
+        S3AllowHTTP:       true, // required when TLS is not configured
+        S3ForcePathStyle:  true, // required for MinIO and most self-hosted stores
+    },
+})
+sidecar.Start(ctx)
+c := sidecar.Client()
+c.Write(ctx, "s3://my-bucket/events", deltago.WriteAppend, rows, schema)
+```
+
+### Google Cloud Storage
+
+```go
+// Credentials read from GOOGLE_APPLICATION_CREDENTIALS or the GCE metadata server.
+c.Write(ctx, "gs://my-bucket/events", deltago.WriteAppend, rows, schema)
+```
+
+### Azure Data Lake Storage
+
+```go
+// Credentials read from AZURE_STORAGE_ACCOUNT_NAME + AZURE_STORAGE_ACCOUNT_KEY,
+// or from the Azure DefaultCredential chain.
+c.Write(ctx, "az://my-container/events", deltago.WriteAppend, rows, schema)
+```
+
+### External sidecar (separate container / service)
 
 ```go
 import (
     "google.golang.org/grpc"
     "google.golang.org/grpc/credentials/insecure"
-    deltapb "github.com/YOUR_USERNAME/go-delta-rs/gen/go/delta"
-    "github.com/YOUR_USERNAME/go-delta-rs/deltago"
+    deltapb "github.com/ghazibendahmane/go-delta-rs/gen/go/delta"
+    "github.com/ghazibendahmane/go-delta-rs/deltago"
 )
 
 conn, _ := grpc.NewClient("sidecar:50051",
@@ -220,30 +276,9 @@ conn, _ := grpc.NewClient("sidecar:50051",
 c := deltago.NewDeltaClient(deltapb.NewDeltaServiceClient(conn))
 ```
 
-Start the server manually:
-
-```bash
-DELTA_SERVER_PORT=50051 ./delta-server/target/release/delta-server
-```
-
-### Storage backends
-
-Supported URIs follow the delta-rs conventions:
-
-| Storage | URI format |
-|---|---|
-| Local filesystem | `file:///absolute/path/to/table` |
-| Amazon S3 | `s3://bucket/prefix` |
-| Google Cloud Storage | `gs://bucket/prefix` |
-| Azure Data Lake | `az://container/path` |
-
-Cloud credentials are read from the environment using the standard SDK conventions for each provider (AWS credential chain, `GOOGLE_APPLICATION_CREDENTIALS`, Azure environment variables).
-
 ---
 
 ## Column types
-
-The following type strings are accepted in `Column.Type` and `ColumnDef.data_type`:
 
 | Type string | Arrow type | Delta primitive |
 |---|---|---|
@@ -279,7 +314,7 @@ The following type strings are accepted in `Column.Type` and `ColumnDef.data_typ
    Storage (local / S3 / GCS / Azure)
 ```
 
-Data is serialised as JSON over gRPC. This is intentional — it keeps the Go client dependency-free (no Arrow/Parquet in Go) and makes the protocol easy to inspect and debug. For workloads moving very large result sets, a future release will add an Arrow IPC streaming mode.
+Data is serialised as JSON over gRPC. This keeps the Go client dependency-free (no Arrow or Parquet in Go) and makes the protocol easy to inspect and debug. An Arrow IPC streaming mode for bulk reads is planned.
 
 ---
 
@@ -287,46 +322,42 @@ Data is serialised as JSON over gRPC. This is intentional — it keeps the Go cl
 
 ```
 go-delta-rs/
-├── proto/delta.proto          # gRPC service definition
+├── proto/delta.proto          # gRPC service definition (source of truth)
 ├── delta-server/              # Rust gRPC sidecar
 │   ├── Cargo.toml
-│   ├── build.rs
 │   └── src/
-│       ├── main.rs            # server entry point
+│       ├── main.rs            # server entry point ($DELTA_SERVER_PORT)
 │       └── service.rs         # RPC handlers
 ├── deltago/                   # Go client package
-│   ├── sidecar.go             # process lifecycle
+│   ├── doc.go
+│   ├── sidecar.go             # Sidecar + StorageConfig
 │   ├── client.go              # DeltaClient API
 │   └── types.go               # Column, Row, WriteMode, …
-├── gen/go/delta/              # generated protobuf stubs
-│   ├── delta.pb.go
-│   └── delta_grpc.pb.go
+├── gen/go/delta/              # generated protobuf stubs (committed)
 ├── example/main.go
 └── Makefile
 ```
 
 ---
 
-## Makefile targets
+## Building from source
 
 ```bash
-make generate      # regenerate Go protobuf stubs from proto/delta.proto
-make build-server  # cargo build --release
-make build-go      # go build ./...
-make all           # generate + build-server + build-go
-make run-example   # build everything and run example/main.go
-make clean         # remove all build artefacts
+make build-server   # cargo build --release
+make build-go       # go build ./...
+make test           # unit + integration tests
+make generate       # regenerate proto stubs (requires protoc)
 ```
 
 ---
 
 ## Contributing
 
-Contributions are welcome. Please open an issue before starting significant work so we can discuss the approach.
+Contributions are welcome. Please open an issue before starting significant work.
 
-- **Bug reports:** include the delta-rs version, Go version, and a minimal reproducer.
-- **New RPC operations:** add to `proto/delta.proto` first, then implement in `service.rs`, then expose in `client.go`.
-- **Arrow IPC streaming mode:** tracked in [#TODO] — a high-value contribution for bulk read performance.
+- **Bug reports:** include the delta-rs version, Go version, storage backend, and a minimal reproducer.
+- **New RPC operations:** add to `proto/delta.proto` first, implement in `service.rs`, expose in `client.go`, add tests.
+- **Arrow IPC streaming:** tracked as a future milestone — high-value contribution for bulk read performance.
 
 ---
 
@@ -334,4 +365,4 @@ Contributions are welcome. Please open an issue before starting significant work
 
 MIT. See [LICENSE](LICENSE).
 
-delta-rs is licensed under Apache 2.0. Apache Arrow (Rust) and Apache DataFusion are licensed under Apache 2.0.
+delta-rs is licensed under Apache 2.0. Apache Arrow and Apache DataFusion are licensed under Apache 2.0.
