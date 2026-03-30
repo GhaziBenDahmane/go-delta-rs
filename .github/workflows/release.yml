@@ -9,7 +9,6 @@ permissions:
   contents: write
 
 jobs:
-  # ── Build native binaries for each platform ─────────────────────────────────
   build:
     name: Build ${{ matrix.artifact }}
     runs-on: ${{ matrix.os }}
@@ -17,32 +16,28 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          # Linux x86_64 — native
           - os: ubuntu-latest
             target: x86_64-unknown-linux-gnu
             artifact: delta-server-linux-amd64
             binary: delta-server
 
-          # Linux arm64 — cross-compiled via `cross`
-          - os: ubuntu-latest
+          - os: ubuntu-24.04-arm
             target: aarch64-unknown-linux-gnu
             artifact: delta-server-linux-arm64
             binary: delta-server
-            use_cross: true
 
-          # macOS Intel
-          - os: macos-13
+          # Both macOS builds run on macos-latest (arm64).
+          # The Intel target is cross-compiled via rustup target add.
+          - os: macos-latest
             target: x86_64-apple-darwin
             artifact: delta-server-darwin-amd64
             binary: delta-server
 
-          # macOS Apple Silicon
           - os: macos-latest
             target: aarch64-apple-darwin
             artifact: delta-server-darwin-arm64
             binary: delta-server
 
-          # Windows x86_64
           - os: windows-latest
             target: x86_64-pc-windows-msvc
             artifact: delta-server-windows-amd64.exe
@@ -60,26 +55,16 @@ jobs:
           workspaces: delta-server -> target
           key: ${{ matrix.target }}
 
-      # protoc is required by tonic_build in build.rs
       - uses: arduino/setup-protoc@v3
         with:
           version: "25.x"
           repo-token: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Install OpenSSL headers (Linux native)
-        if: runner.os == 'Linux' && !matrix.use_cross
+      - name: Install OpenSSL headers (Linux)
+        if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y libssl-dev pkg-config
 
-      - name: Install cross (Linux arm64)
-        if: matrix.use_cross
-        run: cargo install cross --git https://github.com/cross-rs/cross
-
-      - name: Build (cross)
-        if: matrix.use_cross
-        run: cd delta-server && cross build --release --target ${{ matrix.target }}
-
-      - name: Build (cargo)
-        if: '!matrix.use_cross'
+      - name: Build
         run: cd delta-server && cargo build --release --target ${{ matrix.target }}
 
       - name: Rename binary (Unix)
@@ -95,11 +80,11 @@ jobs:
           Copy-Item "delta-server/target/${{ matrix.target }}/release/${{ matrix.binary }}" `
                     "${{ matrix.artifact }}"
 
-      - name: Generate SHA-256 checksum (Unix)
+      - name: SHA-256 checksum (Unix)
         if: runner.os != 'Windows'
         run: sha256sum ${{ matrix.artifact }} > ${{ matrix.artifact }}.sha256
 
-      - name: Generate SHA-256 checksum (Windows)
+      - name: SHA-256 checksum (Windows)
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
@@ -113,7 +98,6 @@ jobs:
             ${{ matrix.artifact }}
             ${{ matrix.artifact }}.sha256
 
-  # ── Create GitHub Release and attach all binaries ───────────────────────────
   release:
     name: Create GitHub Release
     needs: build
@@ -126,9 +110,6 @@ jobs:
           path: artifacts
           merge-multiple: true
 
-      - name: List artifacts
-        run: ls -lh artifacts/
-
       - uses: softprops/action-gh-release@v2
         with:
           generate_release_notes: true
@@ -136,26 +117,25 @@ jobs:
           body: |
             ## Installation
 
-            Download the binary for your platform from the assets below,
-            make it executable, and point `SidecarOptions.BinaryPath` at it.
-
             ```bash
-            # Linux amd64
-            curl -L https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/delta-server-linux-amd64 \
-              -o delta-server && chmod +x delta-server
+            # The Go package auto-downloads the right binary on first use:
+            go get github.com/ghazibendahmane/go-delta-rs/deltago
 
-            # macOS arm64 (Apple Silicon)
-            curl -L https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/delta-server-darwin-arm64 \
-              -o delta-server && chmod +x delta-server
+            # Or pre-install for Docker / CI:
+            go run github.com/ghazibendahmane/go-delta-rs/cmd/setup@${{ github.ref_name }}
             ```
 
-            Verify integrity with the accompanying `.sha256` file:
+            ## Manual download
+
+            | Platform | Binary |
+            |---|---|
+            | Linux x86_64 | `delta-server-linux-amd64` |
+            | Linux arm64 | `delta-server-linux-arm64` |
+            | macOS Intel | `delta-server-darwin-amd64` |
+            | macOS Apple Silicon | `delta-server-darwin-arm64` |
+            | Windows x86_64 | `delta-server-windows-amd64.exe` |
+
+            Verify with the accompanying `.sha256` file:
             ```bash
             sha256sum -c delta-server-linux-amd64.sha256
-            ```
-
-            Or build from source:
-            ```bash
-            git clone https://github.com/${{ github.repository }}
-            cd go-delta-rs/delta-server && cargo build --release
             ```
