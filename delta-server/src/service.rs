@@ -208,10 +208,7 @@ impl DeltaService for DeltaServiceImpl {
     }
 
     // ── Read ──────────────────────────────────────────────────────────────────
-    async fn read(
-        &self,
-        request: Request<ReadRequest>,
-    ) -> Result<Response<ReadResponse>, Status> {
+    async fn read(&self, request: Request<ReadRequest>) -> Result<Response<ReadResponse>, Status> {
         let req = request.into_inner();
         info!("read uri={}", req.table_uri);
 
@@ -230,8 +227,7 @@ impl DeltaService for DeltaServiceImpl {
         };
 
         let ctx = SessionContext::new();
-        ctx.register_table("t", Arc::new(table))
-            .map_err(internal)?;
+        ctx.register_table("t", Arc::new(table)).map_err(internal)?;
 
         let sql = build_select_sql(&req.filter, req.limit);
         let df = ctx.sql(&sql).await.map_err(internal)?;
@@ -255,7 +251,10 @@ impl DeltaService for DeltaServiceImpl {
         let num_rows = json_rows.len() as i64;
         let json_data = format!("[{}]", json_rows.join(","));
 
-        Ok(Response::new(ReadResponse { json_data, num_rows }))
+        Ok(Response::new(ReadResponse {
+            json_data,
+            num_rows,
+        }))
     }
 
     // ── GetTableInfo ──────────────────────────────────────────────────────────
@@ -274,7 +273,8 @@ impl DeltaService for DeltaServiceImpl {
 
         // get_schema() returns &StructType from the delta kernel.
         let kernel_schema = table.get_schema().map_err(internal)?;
-        let schema_fields: Vec<ColumnDef> = kernel_schema.fields().map(kernel_field_to_proto).collect();
+        let schema_fields: Vec<ColumnDef> =
+            kernel_schema.fields().map(kernel_field_to_proto).collect();
 
         let partition_columns = metadata.partition_columns.clone();
         let num_files = table.get_files_count() as i64;
