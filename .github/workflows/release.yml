@@ -60,6 +60,12 @@ jobs:
           workspaces: delta-server -> target
           key: ${{ matrix.target }}
 
+      # protoc is required by tonic_build in build.rs
+      - uses: arduino/setup-protoc@v3
+        with:
+          version: "25.x"
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+
       - name: Install OpenSSL headers (Linux native)
         if: runner.os == 'Linux' && !matrix.use_cross
         run: sudo apt-get update && sudo apt-get install -y libssl-dev pkg-config
