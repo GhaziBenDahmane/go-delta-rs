@@ -48,8 +48,9 @@ type StorageConfig struct {
 
 // SidecarOptions configures how the sidecar process is launched.
 type SidecarOptions struct {
-	// BinaryPath is the path to the compiled delta-server binary.
-	// Defaults to "./delta-server/target/release/delta-server".
+	// BinaryPath is the path to the delta-server binary.
+	// Leave empty (the default) to have the binary downloaded automatically
+	// from GitHub Releases and cached in os.UserCacheDir() on first use.
 	BinaryPath string
 
 	// Port for the gRPC server. 0 = pick a free port automatically.
@@ -79,17 +80,25 @@ type Sidecar struct {
 
 // NewSidecar creates a Sidecar but does not start it yet. Call Start.
 func NewSidecar(opts SidecarOptions) *Sidecar {
-	if opts.BinaryPath == "" {
-		opts.BinaryPath = "./delta-server/target/release/delta-server"
-	}
 	if opts.StartTimeout == 0 {
-		opts.StartTimeout = 10 * time.Second
+		opts.StartTimeout = 30 * time.Second
 	}
 	return &Sidecar{opts: opts}
 }
 
 // Start launches the sidecar process and waits until it is healthy.
+// If BinaryPath is empty, the binary is downloaded automatically from
+// GitHub Releases and cached locally (requires internet access on first run).
 func (s *Sidecar) Start(ctx context.Context) error {
+	binaryPath := s.opts.BinaryPath
+	if binaryPath == "" {
+		var err error
+		binaryPath, err = EnsureBinary()
+		if err != nil {
+			return fmt.Errorf("ensure delta-server binary: %w", err)
+		}
+	}
+
 	port := s.opts.Port
 	if port == 0 {
 		var err error
@@ -100,7 +109,7 @@ func (s *Sidecar) Start(ctx context.Context) error {
 	}
 	s.port = port
 
-	cmd := exec.CommandContext(ctx, s.opts.BinaryPath)
+	cmd := exec.CommandContext(ctx, binaryPath)
 	cmd.Env = append(os.Environ(), fmt.Sprintf("DELTA_SERVER_PORT=%d", port))
 	cmd.Env = append(cmd.Env, storageEnv(s.opts.Storage)...)
 	cmd.Env = append(cmd.Env, s.opts.Env...)

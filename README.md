@@ -107,38 +107,41 @@ Libraries like `github.com/xitongsys/parquet-go` or the Apache Arrow Go library 
 
 ## Installation
 
-### 1. Download the sidecar binary
-
-```bash
-VERSION=v0.1.0 curl -fsSL \
-  https://raw.githubusercontent.com/ghazibendahmane/go-delta-rs/main/install.sh | bash
-```
-
-Or download manually from the [releases page](https://github.com/ghazibendahmane/go-delta-rs/releases) and make it executable:
-
-```bash
-# Linux amd64
-curl -L https://github.com/ghazibendahmane/go-delta-rs/releases/latest/download/delta-server-linux-amd64 \
-  -o delta-server && chmod +x delta-server
-
-# macOS Apple Silicon
-curl -L https://github.com/ghazibendahmane/go-delta-rs/releases/latest/download/delta-server-darwin-arm64 \
-  -o delta-server && chmod +x delta-server
-```
-
-### 2. Add the Go package
-
 ```bash
 go get github.com/ghazibendahmane/go-delta-rs/deltago
 ```
 
-### 3. (Optional) Build from source
+That's it. No Rust compiler, no separate binary download step.
 
-Requires a [Rust toolchain](https://rustup.rs):
+The first time your program calls `sidecar.Start()`, the library downloads the
+correct `delta-server` binary for your OS and architecture from GitHub Releases,
+verifies its SHA-256 checksum, and caches it in your OS cache directory
+(`~/.cache/go-delta-rs/` on Linux, `~/Library/Caches/go-delta-rs/` on macOS).
+Every subsequent run uses the cached binary — no network access needed.
+
+### Supported platforms (pre-built binaries)
+
+| OS | Architecture |
+|---|---|
+| Linux | amd64, arm64 |
+| macOS | amd64 (Intel), arm64 (Apple Silicon) |
+| Windows | amd64 |
+
+### Build from source (optional)
+
+If your platform is not listed above or you prefer to compile yourself:
 
 ```bash
 git clone https://github.com/ghazibendahmane/go-delta-rs
 cd go-delta-rs/delta-server && cargo build --release
+```
+
+Then point `BinaryPath` at the result:
+
+```go
+sidecar := deltago.NewSidecar(deltago.SidecarOptions{
+    BinaryPath: "./delta-server/target/release/delta-server",
+})
 ```
 
 ---
