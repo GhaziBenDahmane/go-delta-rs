@@ -31,6 +31,7 @@ func (c *DeltaClient) Health(ctx context.Context) (string, error) {
 
 // CreateTable creates a new Delta table at tableURI with the given schema.
 // partitionCols may be nil.
+// Returns an error if the table already exists — use EnsureTable to create only when absent.
 func (c *DeltaClient) CreateTable(ctx context.Context, tableURI string, schema []Column, partitionCols []string) error {
 	cols := toProtoCols(schema)
 	_, err := c.client.CreateTable(ctx, &deltapb.CreateTableRequest{
@@ -39,6 +40,22 @@ func (c *DeltaClient) CreateTable(ctx context.Context, tableURI string, schema [
 		PartitionColumns: partitionCols,
 	})
 	return err
+}
+
+// EnsureTable creates the Delta table at tableURI if it does not already exist.
+// Returns (true, nil) when the table was created, (false, nil) when it already existed.
+// Returns (false, err) on any other error.
+func (c *DeltaClient) EnsureTable(ctx context.Context, tableURI string, schema []Column, partitionCols []string) (bool, error) {
+	cols := toProtoCols(schema)
+	resp, err := c.client.CreateTable(ctx, &deltapb.CreateTableRequest{
+		TableUri:         tableURI,
+		Schema:           cols,
+		PartitionColumns: partitionCols,
+	})
+	if err != nil {
+		return false, err
+	}
+	return resp.Created, nil
 }
 
 // Write appends or overwrites rows in the Delta table at tableURI.

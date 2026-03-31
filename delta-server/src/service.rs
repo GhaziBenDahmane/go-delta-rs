@@ -130,19 +130,35 @@ impl DeltaService for DeltaServiceImpl {
 
         let columns: Vec<StructField> = req.schema.iter().map(proto_to_delta_field).collect();
 
-        let _table = DeltaOps::try_from_uri(&req.table_uri)
+        match DeltaOps::try_from_uri(&req.table_uri)
             .await
             .map_err(internal)?
             .create()
             .with_columns(columns)
             .with_partition_columns(req.partition_columns.clone())
             .await
-            .map_err(internal)?;
-
-        Ok(Response::new(CreateTableResponse {
-            created: true,
-            message: format!("table created at {}", req.table_uri),
-        }))
+        {
+            Ok(_) => Ok(Response::new(CreateTableResponse {
+                created: true,
+                message: format!("table created at {}", req.table_uri),
+            })),
+            Err(e) => {
+                let msg = e.to_string().to_lowercase();
+                // Treat "already exists" as a non-error: the table is there.
+                if msg.contains("already exists")
+                    || msg.contains("table already")
+                    || msg.contains("table version")
+                {
+                    info!("create_table: table already exists at {}", req.table_uri);
+                    Ok(Response::new(CreateTableResponse {
+                        created: false,
+                        message: "table already exists".into(),
+                    }))
+                } else {
+                    Err(internal(e))
+                }
+            }
+        }
     }
 
     // ── Write ─────────────────────────────────────────────────────────────────

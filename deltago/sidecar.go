@@ -47,6 +47,11 @@ type StorageConfig struct {
 	// when writing to S3-compatible stores that do not support atomic renames
 	// (e.g. Dell ECS, MinIO, Ceph). Set this to true for any non-AWS S3 target.
 	S3AllowUnsafeRename bool
+
+	// S3ForcePathStyle forces path-style S3 URLs (e.g. https://host/bucket/key)
+	// instead of virtual-hosted-style (e.g. https://bucket.host/key).
+	// Required for Dell ECS, MinIO, Ceph, and most self-hosted S3-compatible stores.
+	S3ForcePathStyle bool
 }
 
 // SidecarOptions configures how the sidecar process is launched.
@@ -268,6 +273,9 @@ func storageEnv(cfg StorageConfig) []string {
 	}
 	if cfg.S3AllowUnsafeRename {
 		env = append(env, "AWS_S3_ALLOW_UNSAFE_RENAME=true")
+	}
+	if cfg.S3ForcePathStyle {
+		env = append(env, "AWS_S3_FORCE_PATH_STYLE=true")
 	}
 	return env
 }
