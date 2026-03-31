@@ -576,8 +576,13 @@ impl DeltaService for DeltaServiceImpl {
 
         // ── Run optimize with corrected metadata ─────────────────────────────
         let base = DeltaOps(table).optimize().with_target_size(target_size);
-        let builder = if !partition_filters.is_empty() {
+        let base = if !partition_filters.is_empty() {
             base.with_filters(&partition_filters)
+        } else {
+            base
+        };
+        let builder = if !req.z_order_columns.is_empty() {
+            base.with_z_order_columns(req.z_order_columns.clone())
         } else {
             base
         };

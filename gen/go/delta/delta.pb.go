@@ -824,8 +824,12 @@ type OptimizeRequest struct {
 	// e.g. "year_month=2026-02". Only files in the matching partition
 	// are compacted. Leave empty to optimize all partitions.
 	PartitionFilter string `protobuf:"bytes,3,opt,name=partition_filter,json=partitionFilter,proto3" json:"partition_filter,omitempty"`
-	unknownFields   protoimpl.UnknownFields
-	sizeCache       protoimpl.SizeCache
+	// Optional Z-ORDER columns. When set, OPTIMIZE applies Z-ordering
+	// on the specified columns to co-locate related data within files,
+	// improving query performance for filters on those columns.
+	ZOrderColumns []string `protobuf:"bytes,4,rep,name=z_order_columns,json=zOrderColumns,proto3" json:"z_order_columns,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
 func (x *OptimizeRequest) Reset() {
@@ -877,6 +881,13 @@ func (x *OptimizeRequest) GetPartitionFilter() string {
 		return x.PartitionFilter
 	}
 	return ""
+}
+
+func (x *OptimizeRequest) GetZOrderColumns() []string {
+	if x != nil {
+		return x.ZOrderColumns
+	}
+	return nil
 }
 
 type OptimizeResponse struct {
@@ -1106,11 +1117,12 @@ const file_delta_proto_rawDesc = "" +
 	"\toperation\x18\x03 \x01(\tR\toperation\x121\n" +
 	"\x14operation_parameters\x18\x04 \x01(\tR\x13operationParameters\">\n" +
 	"\x0fHistoryResponse\x12+\n" +
-	"\acommits\x18\x01 \x03(\v2\x11.delta.CommitInfoR\acommits\"\x85\x01\n" +
+	"\acommits\x18\x01 \x03(\v2\x11.delta.CommitInfoR\acommits\"\xad\x01\n" +
 	"\x0fOptimizeRequest\x12\x1b\n" +
 	"\ttable_uri\x18\x01 \x01(\tR\btableUri\x12*\n" +
 	"\x11target_size_bytes\x18\x02 \x01(\x03R\x0ftargetSizeBytes\x12)\n" +
-	"\x10partition_filter\x18\x03 \x01(\tR\x0fpartitionFilter\"\x8b\x01\n" +
+	"\x10partition_filter\x18\x03 \x01(\tR\x0fpartitionFilter\x12&\n" +
+	"\x0fz_order_columns\x18\x04 \x03(\tR\rzOrderColumns\"\x8b\x01\n" +
 	"\x10OptimizeResponse\x12\x1f\n" +
 	"\vfiles_added\x18\x01 \x01(\x03R\n" +
 	"filesAdded\x12#\n" +

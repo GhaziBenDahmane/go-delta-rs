@@ -45,6 +45,11 @@ type OptimizeOptions struct {
 	// PartitionFilter selects a single partition in "key=value" format,
 	// e.g. "year_month=2026-02". Empty = optimize all partitions.
 	PartitionFilter string
+	// ZOrderColumns applies Z-ordering on the specified columns during OPTIMIZE,
+	// co-locating related data within files to improve query performance.
+	// Only non-partition columns are meaningful (partition columns are already
+	// segregated into separate files).
+	ZOrderColumns []string
 }
 
 // OptimizeResult holds the metrics returned by an Optimize call.

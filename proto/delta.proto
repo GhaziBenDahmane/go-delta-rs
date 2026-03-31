@@ -125,6 +125,10 @@ message OptimizeRequest {
   // e.g. "year_month=2026-02". Only files in the matching partition
   // are compacted. Leave empty to optimize all partitions.
   string partition_filter = 3;
+  // Optional Z-ORDER columns. When set, OPTIMIZE applies Z-ordering
+  // on the specified columns to co-locate related data within files,
+  // improving query performance for filters on those columns.
+  repeated string z_order_columns = 4;
 }
 
 message OptimizeResponse {

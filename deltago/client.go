@@ -166,6 +166,7 @@ func (c *DeltaClient) Optimize(ctx context.Context, tableURI string, opts *Optim
 	if opts != nil {
 		req.TargetSizeBytes = opts.TargetSizeBytes
 		req.PartitionFilter = opts.PartitionFilter
+		req.ZOrderColumns = opts.ZOrderColumns
 	}
 	resp, err := c.client.Optimize(ctx, req)
 	if err != nil {
