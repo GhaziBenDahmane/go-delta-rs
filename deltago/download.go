@@ -14,7 +14,7 @@ import (
 	"strings"
 )
 
-const fallbackVersion = "0.1.0"
+const fallbackVersion = "0.1.1"
 
 const releaseBaseURL = "https://github.com/ghazibendahmane/go-delta-rs/releases/download"
 
