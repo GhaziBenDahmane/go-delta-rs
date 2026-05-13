@@ -6,6 +6,9 @@ use tracing::info;
 
 use deltalake_aws::register_handlers;
 
+#[global_allocator]
+static GLOBAL: tikv_jemallocator::Jemalloc = tikv_jemallocator::Jemalloc;
+
 pub mod delta_proto {
     tonic::include_proto!("delta");
 }
@@ -30,7 +33,7 @@ async fn main() -> anyhow::Result<()> {
         .unwrap_or(50051);
 
     let addr: SocketAddr = format!("0.0.0.0:{port}").parse()?;
-    let svc = DeltaServiceImpl;
+    let svc = DeltaServiceImpl::new();
 
     info!("delta-server listening on {addr}");
 

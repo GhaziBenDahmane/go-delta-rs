@@ -331,6 +331,44 @@ func TestIntegration_ReadAtVersion(t *testing.T) {
 	}
 }
 
+// ── Cached table state (multiple writes reuse sidecar state) ─────────────────
+
+func TestIntegration_CachedWrites(t *testing.T) {
+	_, c := newTestSidecar(t)
+	ctx := context.Background()
+	uri := tempTableURI(t)
+
+	if err := c.CreateTable(ctx, uri, testSchema, nil); err != nil {
+		t.Fatal(err)
+	}
+
+	// Perform many sequential writes — the sidecar should cache table state
+	// and only do incremental refreshes (not full checkpoint loads each time).
+	for i := 0; i < 20; i++ {
+		rows := []deltago.Row{{"id": i, "name": fmt.Sprintf("user%d", i), "score": float64(i)}}
+		if err := c.Write(ctx, uri, deltago.WriteAppend, rows, testSchema); err != nil {
+			t.Fatalf("Write %d: %v", i, err)
+		}
+	}
+
+	got, err := c.Read(ctx, uri, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 20 {
+		t.Errorf("expected 20 rows after 20 writes, got %d", len(got))
+	}
+
+	info, err := c.GetTableInfo(ctx, uri)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// version should be 20 (create is v0, then 20 writes)
+	if info.Version != 20 {
+		t.Errorf("expected version 20, got %d", info.Version)
+	}
+}
+
 // ── Vacuum ────────────────────────────────────────────────────────────────────
 
 func TestIntegration_Vacuum_DryRun(t *testing.T) {

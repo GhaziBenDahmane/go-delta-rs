@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::io::Cursor;
 use std::sync::Arc;
 
@@ -8,8 +9,9 @@ use deltalake::datafusion::prelude::SessionContext;
 use deltalake::kernel::{DataType as DeltaType, PrimitiveType, StructField};
 use deltalake::operations::vacuum::VacuumBuilder;
 use deltalake::protocol::SaveMode;
-use deltalake::DeltaOps;
+use deltalake::{DeltaOps, DeltaTable};
 use serde_json::Value;
+use tokio::sync::RwLock;
 use tonic::{Request, Response, Status};
 use tracing::{info, warn};
 
@@ -104,8 +106,49 @@ fn infer_schema_from_json(rows: &[Value]) -> Schema {
 
 // ── service ───────────────────────────────────────────────────────────────────
 
-#[derive(Debug, Default)]
-pub struct DeltaServiceImpl;
+pub struct DeltaServiceImpl {
+    tables: Arc<RwLock<HashMap<String, DeltaTable>>>,
+}
+
+impl DeltaServiceImpl {
+    pub fn new() -> Self {
+        Self {
+            tables: Arc::new(RwLock::new(HashMap::new())),
+        }
+    }
+
+    /// Get a cached table or open it fresh. On cache hit, only loads new commits
+    /// since the cached version (incremental refresh instead of full checkpoint download).
+    async fn get_or_open_table(&self, table_uri: &str) -> Result<DeltaTable, Status> {
+        {
+            let mut cache = self.tables.write().await;
+            if let Some(table) = cache.get_mut(table_uri) {
+                // Incremental load — only reads commits newer than cached version
+                table.load().await.map_err(internal)?;
+                return Ok(table.clone());
+            }
+        }
+
+        // Cold open — full checkpoint download (happens once per table URI)
+        let table = deltalake::open_table(table_uri).await.map_err(internal)?;
+        let mut cache = self.tables.write().await;
+        cache.insert(table_uri.to_string(), table.clone());
+        Ok(table)
+    }
+
+    /// Evict a table from cache (used after operations that heavily mutate state
+    /// like optimize, so the next open gets a clean snapshot).
+    async fn evict_table(&self, table_uri: &str) {
+        let mut cache = self.tables.write().await;
+        cache.remove(table_uri);
+    }
+
+    /// Update the cached table after a successful write.
+    async fn update_cached_table(&self, table_uri: &str, table: DeltaTable) {
+        let mut cache = self.tables.write().await;
+        cache.insert(table_uri.to_string(), table);
+    }
+}
 
 #[tonic::async_trait]
 impl DeltaService for DeltaServiceImpl {
@@ -138,13 +181,15 @@ impl DeltaService for DeltaServiceImpl {
             .with_partition_columns(req.partition_columns.clone())
             .await
         {
-            Ok(_) => Ok(Response::new(CreateTableResponse {
-                created: true,
-                message: format!("table created at {}", req.table_uri),
-            })),
+            Ok(_) => {
+                self.evict_table(&req.table_uri).await;
+                Ok(Response::new(CreateTableResponse {
+                    created: true,
+                    message: format!("table created at {}", req.table_uri),
+                }))
+            }
             Err(e) => {
                 let msg = e.to_string().to_lowercase();
-                // Treat "already exists" as a non-error: the table is there.
                 if msg.contains("already exists")
                     || msg.contains("table already")
                     || msg.contains("table version")
@@ -215,16 +260,20 @@ impl DeltaService for DeltaServiceImpl {
             }));
         }
 
-        let table = DeltaOps::try_from_uri(&req.table_uri)
-            .await
-            .map_err(internal)?
+        // Use cached table state — only reads new commits since last call
+        let table = self.get_or_open_table(&req.table_uri).await?;
+
+        let table = DeltaOps(table)
             .write(batches)
             .with_save_mode(save_mode)
             .await
             .map_err(internal)?;
 
+        let version = table.version();
+        self.update_cached_table(&req.table_uri, table).await;
+
         Ok(Response::new(WriteResponse {
-            version: table.version(),
+            version,
             rows_written: num_rows,
         }))
     }
@@ -235,9 +284,7 @@ impl DeltaService for DeltaServiceImpl {
         info!("read uri={}", req.table_uri);
 
         let table = if req.version.is_empty() {
-            deltalake::open_table(&req.table_uri)
-                .await
-                .map_err(internal)?
+            self.get_or_open_table(&req.table_uri).await?
         } else {
             let v: i64 = req
                 .version
@@ -287,13 +334,10 @@ impl DeltaService for DeltaServiceImpl {
         let req = request.into_inner();
         info!("get_table_info uri={}", req.table_uri);
 
-        let table = deltalake::open_table(&req.table_uri)
-            .await
-            .map_err(internal)?;
+        let table = self.get_or_open_table(&req.table_uri).await?;
 
         let metadata = table.metadata().map_err(internal)?;
 
-        // get_schema() returns &StructType from the delta kernel.
         let kernel_schema = table.get_schema().map_err(internal)?;
         let schema_fields: Vec<ColumnDef> =
             kernel_schema.fields().map(kernel_field_to_proto).collect();
@@ -323,9 +367,7 @@ impl DeltaService for DeltaServiceImpl {
         let req = request.into_inner();
         info!("history uri={}", req.table_uri);
 
-        let table = deltalake::open_table(&req.table_uri)
-            .await
-            .map_err(internal)?;
+        let table = self.get_or_open_table(&req.table_uri).await?;
 
         let limit = if req.limit > 0 {
             Some(req.limit as usize)
@@ -336,9 +378,6 @@ impl DeltaService for DeltaServiceImpl {
         let current_version = table.version();
         let commits_raw = table.history(limit).await.map_err(internal)?;
 
-        // CommitInfo in deltalake 0.22 does not carry a version field.
-        // Commits are returned newest-first, so we infer version by counting
-        // backwards from the current table version.
         let commits: Vec<CommitInfo> = commits_raw
             .into_iter()
             .enumerate()
@@ -368,11 +407,8 @@ impl DeltaService for DeltaServiceImpl {
         let req = request.into_inner();
         info!("vacuum uri={} dry_run={}", req.table_uri, req.dry_run);
 
-        let table = deltalake::open_table(&req.table_uri)
-            .await
-            .map_err(internal)?;
+        let table = self.get_or_open_table(&req.table_uri).await?;
 
-        // snapshot() returns &DeltaTableState; VacuumBuilder needs an owned copy.
         let mut builder = VacuumBuilder::new(
             table.log_store(),
             table.snapshot().map_err(internal)?.clone(),
@@ -392,6 +428,9 @@ impl DeltaService for DeltaServiceImpl {
         if req.dry_run {
             warn!("vacuum dry_run: would delete {} files", num_deleted);
         }
+
+        // Evict after vacuum since file list changed
+        self.evict_table(&req.table_uri).await;
 
         Ok(Response::new(VacuumResponse {
             deleted_files,
@@ -419,8 +458,8 @@ impl DeltaService for DeltaServiceImpl {
         use deltalake::operations::transaction::{CommitBuilder, CommitProperties};
         use deltalake::protocol::DeltaOperation;
         use deltalake::schema::partitions::PartitionValue;
-        use deltalake::PartitionFilter;
         use deltalake::storage::object_store::path::Path as OsPath;
+        use deltalake::PartitionFilter;
 
         let mut partition_filters: Vec<PartitionFilter> = Vec::new();
         if !req.partition_filter.is_empty() {
@@ -437,23 +476,9 @@ impl DeltaService for DeltaServiceImpl {
             }
         }
 
-        let mut table = deltalake::open_table(&req.table_uri)
-            .await
-            .map_err(internal)?;
+        let mut table = self.get_or_open_table(&req.table_uri).await?;
 
         // ── Repair DuckDB size=1 bug ─────────────────────────────────────────
-        // DuckDB writes size=1 for every file in the delta log. delta-rs uses
-        // this value to issue parquet range reads (bytes=0-0), which returns a
-        // single byte and fails to parse as parquet.
-        //
-        // Fix: emit Add-only actions (no Remove) with corrected sizes.
-        // Using Remove+Add in the same commit causes delta_kernel to drop the
-        // re-Add (Remove wins), shrinking the table. A newer Add with a later
-        // modification_time supersedes the old Add without needing a Remove.
-        //
-        // Recovery: also scan the previous table version to recover any files
-        // dropped by a prior Remove+Add repair (they will have been "Removed"
-        // from the current snapshot but still exist on S3).
         {
             let log_store = table.log_store().clone();
             let snapshot = table.snapshot().map_err(internal)?.clone();
@@ -464,8 +489,7 @@ impl DeltaService for DeltaServiceImpl {
 
             // Recovery: if there's a recent FSCK commit that incorrectly removed
             // size=1 files via Remove+Add, load the version just before that FSCK
-            // and recover any dropped size=1 files.  This is O(1) version loads
-            // vs scanning all history.
+            // and recover any dropped size=1 files.
             if table.version() > 0 {
                 let history = table.history(Some(100)).await.unwrap_or_default();
                 let mut seen_paths: std::collections::HashSet<String> =
@@ -498,14 +522,11 @@ impl DeltaService for DeltaServiceImpl {
                                 }
                             }
                         }
-                        break; // Only handle the most recent FSCK
+                        break;
                     }
                 }
             }
 
-            // 512 bytes is the minimum threshold: no valid parquet file is
-            // smaller. This catches size=1 (DuckDB bug) as well as size=2..511
-            // (corrupted metadata from a bad HEAD response or DuckDB variant).
             let bad_adds: Vec<_> = all_adds
                 .into_iter()
                 .filter(|a| {
@@ -542,9 +563,6 @@ impl DeltaService for DeltaServiceImpl {
                         Status::internal(format!("HEAD {} failed: {e}", add.path))
                     })?;
                     let real_size = meta.size as i64;
-                    // Guard: if the HEAD response is also too small, the
-                    // network may have returned a malformed response. Skip
-                    // this file rather than committing a still-wrong size.
                     if real_size < 512 {
                         warn!(
                             "HEAD returned suspicious size {} for {}, skipping",
@@ -575,19 +593,20 @@ impl DeltaService for DeltaServiceImpl {
         }
 
         // ── Run optimize with corrected metadata ─────────────────────────────
-        let base = DeltaOps(table).optimize().with_target_size(target_size);
-        let base = if !partition_filters.is_empty() {
-            base.with_filters(&partition_filters)
-        } else {
-            base
-        };
-        let builder = if !req.z_order_columns.is_empty() {
-            base.with_z_order_columns(req.z_order_columns.clone())
-        } else {
-            base
-        };
+        use deltalake::operations::optimize::OptimizeType;
+
+        let mut builder = DeltaOps(table).optimize().with_target_size(target_size);
+        if !partition_filters.is_empty() {
+            builder = builder.with_filters(&partition_filters);
+        }
+        if !req.z_order_columns.is_empty() {
+            builder = builder.with_type(OptimizeType::ZOrder(req.z_order_columns.clone()));
+        }
 
         let (_, metrics) = builder.await.map_err(internal)?;
+
+        // Evict after optimize since file list changed significantly
+        self.evict_table(&req.table_uri).await;
 
         Ok(Response::new(OptimizeResponse {
             files_added: metrics.num_files_added as i64,
