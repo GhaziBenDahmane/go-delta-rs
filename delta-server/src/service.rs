@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 use std::io::Cursor;
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 
 use arrow::datatypes::{DataType as ArrowType, Field, Schema, TimeUnit};
 use arrow_json::ReaderBuilder;
@@ -106,6 +106,20 @@ fn infer_schema_from_json(rows: &[Value]) -> Schema {
 
 // ── service ───────────────────────────────────────────────────────────────────
 
+fn storage_options() -> &'static HashMap<String, String> {
+    static OPTS: OnceLock<HashMap<String, String>> = OnceLock::new();
+    OPTS.get_or_init(|| {
+        let mut m = HashMap::new();
+        if let Ok(v) = std::env::var("AWS_CONDITIONAL_PUT") {
+            m.insert("conditional_put".to_string(), v);
+        }
+        if let Ok(v) = std::env::var("AWS_S3_ALLOW_UNSAFE_RENAME") {
+            m.insert("AWS_S3_ALLOW_UNSAFE_RENAME".to_string(), v);
+        }
+        m
+    })
+}
+
 pub struct DeltaServiceImpl {
     tables: Arc<RwLock<HashMap<String, DeltaTable>>>,
 }
@@ -130,7 +144,9 @@ impl DeltaServiceImpl {
         }
 
         // Cold open — full checkpoint download (happens once per table URI)
-        let table = deltalake::open_table(table_uri).await.map_err(internal)?;
+        let table = deltalake::open_table_with_storage_options(table_uri, storage_options().clone())
+            .await
+            .map_err(internal)?;
         let mut cache = self.tables.write().await;
         cache.insert(table_uri.to_string(), table.clone());
         Ok(table)
@@ -173,7 +189,7 @@ impl DeltaService for DeltaServiceImpl {
 
         let columns: Vec<StructField> = req.schema.iter().map(proto_to_delta_field).collect();
 
-        match DeltaOps::try_from_uri(&req.table_uri)
+        match DeltaOps::try_from_uri_with_storage_options(&req.table_uri, storage_options().clone())
             .await
             .map_err(internal)?
             .create()
@@ -290,7 +306,10 @@ impl DeltaService for DeltaServiceImpl {
                 .version
                 .parse()
                 .map_err(|_| Status::invalid_argument("version must be an integer"))?;
-            deltalake::open_table_with_version(&req.table_uri, v)
+            deltalake::DeltaTableBuilder::from_uri(&req.table_uri)
+                .with_storage_options(storage_options().clone())
+                .with_version(v)
+                .load()
                 .await
                 .map_err(internal)?
         };
@@ -501,6 +520,7 @@ impl DeltaService for DeltaServiceImpl {
                         let pre_fsck_version = fsck_version - 1;
                         if let Ok(pre_fsck) =
                             deltalake::DeltaTableBuilder::from_uri(&req.table_uri)
+                                .with_storage_options(storage_options().clone())
                                 .with_version(pre_fsck_version)
                                 .load()
                                 .await
