@@ -4,6 +4,12 @@ on:
   push:
     tags:
       - 'v*.*.*'
+  workflow_dispatch:
+
+env:
+  CARGO_HTTP_MULTIPLEXING: "false"
+  CARGO_HTTP_TIMEOUT: "120"
+  CARGO_NET_RETRY: "10"
 
 permissions:
   contents: write
@@ -12,6 +18,7 @@ jobs:
   build:
     name: Build ${{ matrix.artifact }}
     runs-on: ${{ matrix.os }}
+    continue-on-error: ${{ !matrix.required }}
     strategy:
       fail-fast: false
       matrix:
@@ -20,11 +27,13 @@ jobs:
             target: x86_64-unknown-linux-gnu
             artifact: delta-server-linux-amd64
             binary: delta-server
+            required: true
 
           - os: ubuntu-24.04-arm
             target: aarch64-unknown-linux-gnu
             artifact: delta-server-linux-arm64
             binary: delta-server
+            required: false
 
           # Both macOS builds run on macos-latest (arm64).
           # The Intel target is cross-compiled via rustup target add.
@@ -32,16 +41,19 @@ jobs:
             target: x86_64-apple-darwin
             artifact: delta-server-darwin-amd64
             binary: delta-server
+            required: false
 
           - os: macos-latest
             target: aarch64-apple-darwin
             artifact: delta-server-darwin-arm64
             binary: delta-server
+            required: false
 
           - os: windows-latest
             target: x86_64-pc-windows-msvc
             artifact: delta-server-windows-amd64.exe
             binary: delta-server.exe
+            required: false
 
     steps:
       - uses: actions/checkout@v4
@@ -64,8 +76,35 @@ jobs:
         if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y libssl-dev pkg-config
 
-      - name: Build
-        run: cd delta-server && cargo build --release --target ${{ matrix.target }}
+      - name: Build with retry (Unix)
+        if: runner.os != 'Windows'
+        shell: bash
+        env:
+          TARGET: ${{ matrix.target }}
+        run: |
+          cd delta-server
+          for attempt in 1 2 3; do
+            if cargo build --release --target "$TARGET"; then
+              exit 0
+            fi
+            sleep $((attempt * 20))
+          done
+          cargo build --release --target "$TARGET"
+
+      - name: Build with retry (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          Set-Location delta-server
+          foreach ($attempt in 1..3) {
+            cargo build --release --target "${{ matrix.target }}"
+            if ($LASTEXITCODE -eq 0) {
+              exit 0
+            }
+            Start-Sleep -Seconds ($attempt * 20)
+          }
+          cargo build --release --target "${{ matrix.target }}"
+          exit $LASTEXITCODE
 
       - name: Rename binary (Unix)
         if: runner.os != 'Windows'
@@ -126,6 +165,10 @@ jobs:
             ```
 
             ## Manual download
+
+            Linux x86_64 is the required release artifact used by the Docker
+            setup flow. Other platform binaries are attached when their matrix
+            builds succeed.
 
             | Platform | Binary |
             |---|---|
