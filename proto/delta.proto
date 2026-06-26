@@ -13,6 +13,7 @@ service DeltaService {
   rpc History(HistoryRequest) returns (HistoryResponse);
   rpc Vacuum(VacuumRequest) returns (VacuumResponse);
   rpc Optimize(OptimizeRequest) returns (OptimizeResponse);
+  rpc RewriteCheckpointMultipart(RewriteCheckpointMultipartRequest) returns (RewriteCheckpointMultipartResponse);
 }
 
 // ---------- Health ----------
@@ -57,11 +58,20 @@ message WriteRequest {
   // Optional: column definitions needed when writing to a new table.
   // If omitted the schema is inferred from json_data (all strings).
   repeated ColumnDef schema = 4;
+  // Optional stable identifier for diagnostics and commit metadata.
+  string batch_id = 5;
+  // Optional Delta application transaction id. When present with a positive
+  // app_transaction_version, repeated writes with the same transaction are
+  // treated as already committed.
+  string app_transaction_id = 6;
+  int64 app_transaction_version = 7;
 }
 
 message WriteResponse {
   int64 version = 1;
   int64 rows_written = 2;
+  bool already_committed = 3;
+  string batch_id = 4;
 }
 
 // ---------- Read ----------
@@ -135,6 +145,33 @@ message OptimizeResponse {
   int64 files_added = 1;
   int64 files_removed = 2;
   int64 partitions_optimized = 3;
+}
+
+// ---------- Checkpoint Maintenance ----------
+
+message RewriteCheckpointMultipartRequest {
+  string table_uri = 1;
+  // Desired maximum checkpoint part size in bytes. 0 uses the server default.
+  int64 target_part_size_bytes = 2;
+  // Explicit number of checkpoint parts. When >0 this takes precedence over
+  // target_part_size_bytes.
+  int32 target_parts = 3;
+  // Preview the rewrite plan without writing objects.
+  bool dry_run = 4;
+}
+
+message RewriteCheckpointMultipartResponse {
+  int64 version = 1;
+  int32 source_parts = 2;
+  int32 target_parts = 3;
+  int64 source_size_bytes = 4;
+  int64 target_size_bytes = 5;
+  int64 max_part_size_bytes = 6;
+  int64 rows = 7;
+  bool rewritten = 8;
+  string backup_prefix = 9;
+  repeated string checkpoint_files = 10;
+  string message = 11;
 }
 
 // ---------- Vacuum ----------

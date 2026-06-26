@@ -20,6 +20,10 @@
 //	                           (leave empty to optimize all partitions)
 //	  --retention-hours N      vacuum retention in hours (default 168)
 //	  --target-size-mb N       optimize target file size in MiB (default 256)
+//	  --rewrite-checkpoint     rewrite latest checkpoint as multipart parquet
+//	  --checkpoint-only        run checkpoint rewrite only
+//	  --checkpoint-parts N     explicit checkpoint part count
+//	  --checkpoint-size-mb N   target checkpoint part size in MiB (default 32)
 package main
 
 import (
@@ -41,6 +45,10 @@ func main() {
 	partitionFilter := flag.String("partition-filter", "", "optimize a single partition in key=value format (empty = all partitions)")
 	retentionHours := flag.Float64("retention-hours", 168, "vacuum retention in hours")
 	targetSizeMB := flag.Int64("target-size-mb", 256, "optimize target file size in MiB")
+	rewriteCheckpoint := flag.Bool("rewrite-checkpoint", false, "rewrite latest checkpoint as multipart parquet")
+	checkpointOnly := flag.Bool("checkpoint-only", false, "run checkpoint rewrite only")
+	checkpointParts := flag.Int("checkpoint-parts", 0, "explicit checkpoint part count (0 = derive from checkpoint-size-mb)")
+	checkpointSizeMB := flag.Int64("checkpoint-size-mb", 32, "target checkpoint part size in MiB")
 	flag.Parse()
 
 	// ── Config from env ──────────────────────────────────────────────────────
@@ -100,6 +108,43 @@ func main() {
 
 	// ── Table info (before) ──────────────────────────────────────────────────
 	printTableInfo(ctx, client, tableURI, "BEFORE")
+
+	// ── Checkpoint rewrite ───────────────────────────────────────────────────
+	if *rewriteCheckpoint || *checkpointOnly {
+		slog.Info("rewriting checkpoint",
+			"table", tableURI,
+			"target_size_mb", *checkpointSizeMB,
+			"target_parts", *checkpointParts,
+			"dry_run", *dryRun,
+		)
+		result, err := client.RewriteCheckpointMultipart(ctx, tableURI, &deltago.RewriteCheckpointOptions{
+			TargetPartSizeBytes: *checkpointSizeMB * 1024 * 1024,
+			TargetParts:         int32(*checkpointParts),
+			DryRun:              *dryRun,
+		})
+		if err != nil {
+			slog.Error("checkpoint rewrite failed", "error", err)
+			os.Exit(1)
+		}
+		slog.Info("checkpoint rewrite complete",
+			"version", result.Version,
+			"source_parts", result.SourceParts,
+			"target_parts", result.TargetParts,
+			"source_size_bytes", result.SourceSizeBytes,
+			"target_size_bytes", result.TargetSizeBytes,
+			"max_part_size_bytes", result.MaxPartSizeBytes,
+			"rows", result.Rows,
+			"rewritten", result.Rewritten,
+			"backup_prefix", result.BackupPrefix,
+			"message", result.Message,
+		)
+		if *checkpointOnly {
+			if !*dryRun {
+				printTableInfo(ctx, client, tableURI, "AFTER")
+			}
+			return
+		}
+	}
 
 	// ── Optimize ─────────────────────────────────────────────────────────────
 	if !*vacuumOnly {

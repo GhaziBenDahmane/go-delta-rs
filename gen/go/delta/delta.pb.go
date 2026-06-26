@@ -291,9 +291,16 @@ type WriteRequest struct {
 	JsonData string `protobuf:"bytes,3,opt,name=json_data,json=jsonData,proto3" json:"json_data,omitempty"`
 	// Optional: column definitions needed when writing to a new table.
 	// If omitted the schema is inferred from json_data (all strings).
-	Schema        []*ColumnDef `protobuf:"bytes,4,rep,name=schema,proto3" json:"schema,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	Schema []*ColumnDef `protobuf:"bytes,4,rep,name=schema,proto3" json:"schema,omitempty"`
+	// Optional stable identifier for diagnostics and commit metadata.
+	BatchId string `protobuf:"bytes,5,opt,name=batch_id,json=batchId,proto3" json:"batch_id,omitempty"`
+	// Optional Delta application transaction id. When present with a positive
+	// app_transaction_version, repeated writes with the same transaction are
+	// treated as already committed.
+	AppTransactionId      string `protobuf:"bytes,6,opt,name=app_transaction_id,json=appTransactionId,proto3" json:"app_transaction_id,omitempty"`
+	AppTransactionVersion int64  `protobuf:"varint,7,opt,name=app_transaction_version,json=appTransactionVersion,proto3" json:"app_transaction_version,omitempty"`
+	unknownFields         protoimpl.UnknownFields
+	sizeCache             protoimpl.SizeCache
 }
 
 func (x *WriteRequest) Reset() {
@@ -354,12 +361,35 @@ func (x *WriteRequest) GetSchema() []*ColumnDef {
 	return nil
 }
 
+func (x *WriteRequest) GetBatchId() string {
+	if x != nil {
+		return x.BatchId
+	}
+	return ""
+}
+
+func (x *WriteRequest) GetAppTransactionId() string {
+	if x != nil {
+		return x.AppTransactionId
+	}
+	return ""
+}
+
+func (x *WriteRequest) GetAppTransactionVersion() int64 {
+	if x != nil {
+		return x.AppTransactionVersion
+	}
+	return 0
+}
+
 type WriteResponse struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Version       int64                  `protobuf:"varint,1,opt,name=version,proto3" json:"version,omitempty"`
-	RowsWritten   int64                  `protobuf:"varint,2,opt,name=rows_written,json=rowsWritten,proto3" json:"rows_written,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	state            protoimpl.MessageState `protogen:"open.v1"`
+	Version          int64                  `protobuf:"varint,1,opt,name=version,proto3" json:"version,omitempty"`
+	RowsWritten      int64                  `protobuf:"varint,2,opt,name=rows_written,json=rowsWritten,proto3" json:"rows_written,omitempty"`
+	AlreadyCommitted bool                   `protobuf:"varint,3,opt,name=already_committed,json=alreadyCommitted,proto3" json:"already_committed,omitempty"`
+	BatchId          string                 `protobuf:"bytes,4,opt,name=batch_id,json=batchId,proto3" json:"batch_id,omitempty"`
+	unknownFields    protoimpl.UnknownFields
+	sizeCache        protoimpl.SizeCache
 }
 
 func (x *WriteResponse) Reset() {
@@ -404,6 +434,20 @@ func (x *WriteResponse) GetRowsWritten() int64 {
 		return x.RowsWritten
 	}
 	return 0
+}
+
+func (x *WriteResponse) GetAlreadyCommitted() bool {
+	if x != nil {
+		return x.AlreadyCommitted
+	}
+	return false
+}
+
+func (x *WriteResponse) GetBatchId() string {
+	if x != nil {
+		return x.BatchId
+	}
+	return ""
 }
 
 type ReadRequest struct {
@@ -950,6 +994,202 @@ func (x *OptimizeResponse) GetPartitionsOptimized() int64 {
 	return 0
 }
 
+type RewriteCheckpointMultipartRequest struct {
+	state    protoimpl.MessageState `protogen:"open.v1"`
+	TableUri string                 `protobuf:"bytes,1,opt,name=table_uri,json=tableUri,proto3" json:"table_uri,omitempty"`
+	// Desired maximum checkpoint part size in bytes. 0 uses the server default.
+	TargetPartSizeBytes int64 `protobuf:"varint,2,opt,name=target_part_size_bytes,json=targetPartSizeBytes,proto3" json:"target_part_size_bytes,omitempty"`
+	// Explicit number of checkpoint parts. When >0 this takes precedence over
+	// target_part_size_bytes.
+	TargetParts int32 `protobuf:"varint,3,opt,name=target_parts,json=targetParts,proto3" json:"target_parts,omitempty"`
+	// Preview the rewrite plan without writing objects.
+	DryRun        bool `protobuf:"varint,4,opt,name=dry_run,json=dryRun,proto3" json:"dry_run,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *RewriteCheckpointMultipartRequest) Reset() {
+	*x = RewriteCheckpointMultipartRequest{}
+	mi := &file_delta_proto_msgTypes[16]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *RewriteCheckpointMultipartRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*RewriteCheckpointMultipartRequest) ProtoMessage() {}
+
+func (x *RewriteCheckpointMultipartRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_delta_proto_msgTypes[16]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use RewriteCheckpointMultipartRequest.ProtoReflect.Descriptor instead.
+func (*RewriteCheckpointMultipartRequest) Descriptor() ([]byte, []int) {
+	return file_delta_proto_rawDescGZIP(), []int{16}
+}
+
+func (x *RewriteCheckpointMultipartRequest) GetTableUri() string {
+	if x != nil {
+		return x.TableUri
+	}
+	return ""
+}
+
+func (x *RewriteCheckpointMultipartRequest) GetTargetPartSizeBytes() int64 {
+	if x != nil {
+		return x.TargetPartSizeBytes
+	}
+	return 0
+}
+
+func (x *RewriteCheckpointMultipartRequest) GetTargetParts() int32 {
+	if x != nil {
+		return x.TargetParts
+	}
+	return 0
+}
+
+func (x *RewriteCheckpointMultipartRequest) GetDryRun() bool {
+	if x != nil {
+		return x.DryRun
+	}
+	return false
+}
+
+type RewriteCheckpointMultipartResponse struct {
+	state            protoimpl.MessageState `protogen:"open.v1"`
+	Version          int64                  `protobuf:"varint,1,opt,name=version,proto3" json:"version,omitempty"`
+	SourceParts      int32                  `protobuf:"varint,2,opt,name=source_parts,json=sourceParts,proto3" json:"source_parts,omitempty"`
+	TargetParts      int32                  `protobuf:"varint,3,opt,name=target_parts,json=targetParts,proto3" json:"target_parts,omitempty"`
+	SourceSizeBytes  int64                  `protobuf:"varint,4,opt,name=source_size_bytes,json=sourceSizeBytes,proto3" json:"source_size_bytes,omitempty"`
+	TargetSizeBytes  int64                  `protobuf:"varint,5,opt,name=target_size_bytes,json=targetSizeBytes,proto3" json:"target_size_bytes,omitempty"`
+	MaxPartSizeBytes int64                  `protobuf:"varint,6,opt,name=max_part_size_bytes,json=maxPartSizeBytes,proto3" json:"max_part_size_bytes,omitempty"`
+	Rows             int64                  `protobuf:"varint,7,opt,name=rows,proto3" json:"rows,omitempty"`
+	Rewritten        bool                   `protobuf:"varint,8,opt,name=rewritten,proto3" json:"rewritten,omitempty"`
+	BackupPrefix     string                 `protobuf:"bytes,9,opt,name=backup_prefix,json=backupPrefix,proto3" json:"backup_prefix,omitempty"`
+	CheckpointFiles  []string               `protobuf:"bytes,10,rep,name=checkpoint_files,json=checkpointFiles,proto3" json:"checkpoint_files,omitempty"`
+	Message          string                 `protobuf:"bytes,11,opt,name=message,proto3" json:"message,omitempty"`
+	unknownFields    protoimpl.UnknownFields
+	sizeCache        protoimpl.SizeCache
+}
+
+func (x *RewriteCheckpointMultipartResponse) Reset() {
+	*x = RewriteCheckpointMultipartResponse{}
+	mi := &file_delta_proto_msgTypes[17]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *RewriteCheckpointMultipartResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*RewriteCheckpointMultipartResponse) ProtoMessage() {}
+
+func (x *RewriteCheckpointMultipartResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_delta_proto_msgTypes[17]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use RewriteCheckpointMultipartResponse.ProtoReflect.Descriptor instead.
+func (*RewriteCheckpointMultipartResponse) Descriptor() ([]byte, []int) {
+	return file_delta_proto_rawDescGZIP(), []int{17}
+}
+
+func (x *RewriteCheckpointMultipartResponse) GetVersion() int64 {
+	if x != nil {
+		return x.Version
+	}
+	return 0
+}
+
+func (x *RewriteCheckpointMultipartResponse) GetSourceParts() int32 {
+	if x != nil {
+		return x.SourceParts
+	}
+	return 0
+}
+
+func (x *RewriteCheckpointMultipartResponse) GetTargetParts() int32 {
+	if x != nil {
+		return x.TargetParts
+	}
+	return 0
+}
+
+func (x *RewriteCheckpointMultipartResponse) GetSourceSizeBytes() int64 {
+	if x != nil {
+		return x.SourceSizeBytes
+	}
+	return 0
+}
+
+func (x *RewriteCheckpointMultipartResponse) GetTargetSizeBytes() int64 {
+	if x != nil {
+		return x.TargetSizeBytes
+	}
+	return 0
+}
+
+func (x *RewriteCheckpointMultipartResponse) GetMaxPartSizeBytes() int64 {
+	if x != nil {
+		return x.MaxPartSizeBytes
+	}
+	return 0
+}
+
+func (x *RewriteCheckpointMultipartResponse) GetRows() int64 {
+	if x != nil {
+		return x.Rows
+	}
+	return 0
+}
+
+func (x *RewriteCheckpointMultipartResponse) GetRewritten() bool {
+	if x != nil {
+		return x.Rewritten
+	}
+	return false
+}
+
+func (x *RewriteCheckpointMultipartResponse) GetBackupPrefix() string {
+	if x != nil {
+		return x.BackupPrefix
+	}
+	return ""
+}
+
+func (x *RewriteCheckpointMultipartResponse) GetCheckpointFiles() []string {
+	if x != nil {
+		return x.CheckpointFiles
+	}
+	return nil
+}
+
+func (x *RewriteCheckpointMultipartResponse) GetMessage() string {
+	if x != nil {
+		return x.Message
+	}
+	return ""
+}
+
 type VacuumRequest struct {
 	state    protoimpl.MessageState `protogen:"open.v1"`
 	TableUri string                 `protobuf:"bytes,1,opt,name=table_uri,json=tableUri,proto3" json:"table_uri,omitempty"`
@@ -962,7 +1202,7 @@ type VacuumRequest struct {
 
 func (x *VacuumRequest) Reset() {
 	*x = VacuumRequest{}
-	mi := &file_delta_proto_msgTypes[16]
+	mi := &file_delta_proto_msgTypes[18]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -974,7 +1214,7 @@ func (x *VacuumRequest) String() string {
 func (*VacuumRequest) ProtoMessage() {}
 
 func (x *VacuumRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_delta_proto_msgTypes[16]
+	mi := &file_delta_proto_msgTypes[18]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -987,7 +1227,7 @@ func (x *VacuumRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use VacuumRequest.ProtoReflect.Descriptor instead.
 func (*VacuumRequest) Descriptor() ([]byte, []int) {
-	return file_delta_proto_rawDescGZIP(), []int{16}
+	return file_delta_proto_rawDescGZIP(), []int{18}
 }
 
 func (x *VacuumRequest) GetTableUri() string {
@@ -1021,7 +1261,7 @@ type VacuumResponse struct {
 
 func (x *VacuumResponse) Reset() {
 	*x = VacuumResponse{}
-	mi := &file_delta_proto_msgTypes[17]
+	mi := &file_delta_proto_msgTypes[19]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1033,7 +1273,7 @@ func (x *VacuumResponse) String() string {
 func (*VacuumResponse) ProtoMessage() {}
 
 func (x *VacuumResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_delta_proto_msgTypes[17]
+	mi := &file_delta_proto_msgTypes[19]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1046,7 +1286,7 @@ func (x *VacuumResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use VacuumResponse.ProtoReflect.Descriptor instead.
 func (*VacuumResponse) Descriptor() ([]byte, []int) {
-	return file_delta_proto_rawDescGZIP(), []int{17}
+	return file_delta_proto_rawDescGZIP(), []int{19}
 }
 
 func (x *VacuumResponse) GetDeletedFiles() []string {
@@ -1082,15 +1322,20 @@ const file_delta_proto_rawDesc = "" +
 	"\x11partition_columns\x18\x03 \x03(\tR\x10partitionColumns\"I\n" +
 	"\x13CreateTableResponse\x12\x18\n" +
 	"\acreated\x18\x01 \x01(\bR\acreated\x12\x18\n" +
-	"\amessage\x18\x02 \x01(\tR\amessage\"\x86\x01\n" +
+	"\amessage\x18\x02 \x01(\tR\amessage\"\x87\x02\n" +
 	"\fWriteRequest\x12\x1b\n" +
 	"\ttable_uri\x18\x01 \x01(\tR\btableUri\x12\x12\n" +
 	"\x04mode\x18\x02 \x01(\tR\x04mode\x12\x1b\n" +
 	"\tjson_data\x18\x03 \x01(\tR\bjsonData\x12(\n" +
-	"\x06schema\x18\x04 \x03(\v2\x10.delta.ColumnDefR\x06schema\"L\n" +
+	"\x06schema\x18\x04 \x03(\v2\x10.delta.ColumnDefR\x06schema\x12\x19\n" +
+	"\bbatch_id\x18\x05 \x01(\tR\abatchId\x12,\n" +
+	"\x12app_transaction_id\x18\x06 \x01(\tR\x10appTransactionId\x126\n" +
+	"\x17app_transaction_version\x18\a \x01(\x03R\x15appTransactionVersion\"\x94\x01\n" +
 	"\rWriteResponse\x12\x18\n" +
 	"\aversion\x18\x01 \x01(\x03R\aversion\x12!\n" +
-	"\frows_written\x18\x02 \x01(\x03R\vrowsWritten\"r\n" +
+	"\frows_written\x18\x02 \x01(\x03R\vrowsWritten\x12+\n" +
+	"\x11already_committed\x18\x03 \x01(\bR\x10alreadyCommitted\x12\x19\n" +
+	"\bbatch_id\x18\x04 \x01(\tR\abatchId\"r\n" +
 	"\vReadRequest\x12\x1b\n" +
 	"\ttable_uri\x18\x01 \x01(\tR\btableUri\x12\x18\n" +
 	"\aversion\x18\x02 \x01(\tR\aversion\x12\x16\n" +
@@ -1127,7 +1372,25 @@ const file_delta_proto_rawDesc = "" +
 	"\vfiles_added\x18\x01 \x01(\x03R\n" +
 	"filesAdded\x12#\n" +
 	"\rfiles_removed\x18\x02 \x01(\x03R\ffilesRemoved\x121\n" +
-	"\x14partitions_optimized\x18\x03 \x01(\x03R\x13partitionsOptimized\"n\n" +
+	"\x14partitions_optimized\x18\x03 \x01(\x03R\x13partitionsOptimized\"\xb1\x01\n" +
+	"!RewriteCheckpointMultipartRequest\x12\x1b\n" +
+	"\ttable_uri\x18\x01 \x01(\tR\btableUri\x123\n" +
+	"\x16target_part_size_bytes\x18\x02 \x01(\x03R\x13targetPartSizeBytes\x12!\n" +
+	"\ftarget_parts\x18\x03 \x01(\x05R\vtargetParts\x12\x17\n" +
+	"\adry_run\x18\x04 \x01(\bR\x06dryRun\"\xa7\x03\n" +
+	"\"RewriteCheckpointMultipartResponse\x12\x18\n" +
+	"\aversion\x18\x01 \x01(\x03R\aversion\x12!\n" +
+	"\fsource_parts\x18\x02 \x01(\x05R\vsourceParts\x12!\n" +
+	"\ftarget_parts\x18\x03 \x01(\x05R\vtargetParts\x12*\n" +
+	"\x11source_size_bytes\x18\x04 \x01(\x03R\x0fsourceSizeBytes\x12*\n" +
+	"\x11target_size_bytes\x18\x05 \x01(\x03R\x0ftargetSizeBytes\x12-\n" +
+	"\x13max_part_size_bytes\x18\x06 \x01(\x03R\x10maxPartSizeBytes\x12\x12\n" +
+	"\x04rows\x18\a \x01(\x03R\x04rows\x12\x1c\n" +
+	"\trewritten\x18\b \x01(\bR\trewritten\x12#\n" +
+	"\rbackup_prefix\x18\t \x01(\tR\fbackupPrefix\x12)\n" +
+	"\x10checkpoint_files\x18\n" +
+	" \x03(\tR\x0fcheckpointFiles\x12\x18\n" +
+	"\amessage\x18\v \x01(\tR\amessage\"n\n" +
 	"\rVacuumRequest\x12\x1b\n" +
 	"\ttable_uri\x18\x01 \x01(\tR\btableUri\x12'\n" +
 	"\x0fretention_hours\x18\x02 \x01(\x02R\x0eretentionHours\x12\x17\n" +
@@ -1135,7 +1398,7 @@ const file_delta_proto_rawDesc = "" +
 	"\x0eVacuumResponse\x12#\n" +
 	"\rdeleted_files\x18\x01 \x03(\tR\fdeletedFiles\x12\x1f\n" +
 	"\vnum_deleted\x18\x02 \x01(\x03R\n" +
-	"numDeleted2\xe7\x03\n" +
+	"numDeleted2\xda\x04\n" +
 	"\fDeltaService\x125\n" +
 	"\x06Health\x12\x14.delta.HealthRequest\x1a\x15.delta.HealthResponse\x12D\n" +
 	"\vCreateTable\x12\x19.delta.CreateTableRequest\x1a\x1a.delta.CreateTableResponse\x122\n" +
@@ -1144,7 +1407,8 @@ const file_delta_proto_rawDesc = "" +
 	"\fGetTableInfo\x12\x1a.delta.GetTableInfoRequest\x1a\x1b.delta.GetTableInfoResponse\x128\n" +
 	"\aHistory\x12\x15.delta.HistoryRequest\x1a\x16.delta.HistoryResponse\x125\n" +
 	"\x06Vacuum\x12\x14.delta.VacuumRequest\x1a\x15.delta.VacuumResponse\x12;\n" +
-	"\bOptimize\x12\x16.delta.OptimizeRequest\x1a\x17.delta.OptimizeResponseB5Z3github.com/ghazibendahmane/go-delta-rs/gen/go/deltab\x06proto3"
+	"\bOptimize\x12\x16.delta.OptimizeRequest\x1a\x17.delta.OptimizeResponse\x12q\n" +
+	"\x1aRewriteCheckpointMultipart\x12(.delta.RewriteCheckpointMultipartRequest\x1a).delta.RewriteCheckpointMultipartResponseB5Z3github.com/ghazibendahmane/go-delta-rs/gen/go/deltab\x06proto3"
 
 var (
 	file_delta_proto_rawDescOnce sync.Once
@@ -1158,26 +1422,28 @@ func file_delta_proto_rawDescGZIP() []byte {
 	return file_delta_proto_rawDescData
 }
 
-var file_delta_proto_msgTypes = make([]protoimpl.MessageInfo, 18)
+var file_delta_proto_msgTypes = make([]protoimpl.MessageInfo, 20)
 var file_delta_proto_goTypes = []any{
-	(*HealthRequest)(nil),        // 0: delta.HealthRequest
-	(*HealthResponse)(nil),       // 1: delta.HealthResponse
-	(*ColumnDef)(nil),            // 2: delta.ColumnDef
-	(*CreateTableRequest)(nil),   // 3: delta.CreateTableRequest
-	(*CreateTableResponse)(nil),  // 4: delta.CreateTableResponse
-	(*WriteRequest)(nil),         // 5: delta.WriteRequest
-	(*WriteResponse)(nil),        // 6: delta.WriteResponse
-	(*ReadRequest)(nil),          // 7: delta.ReadRequest
-	(*ReadResponse)(nil),         // 8: delta.ReadResponse
-	(*GetTableInfoRequest)(nil),  // 9: delta.GetTableInfoRequest
-	(*GetTableInfoResponse)(nil), // 10: delta.GetTableInfoResponse
-	(*HistoryRequest)(nil),       // 11: delta.HistoryRequest
-	(*CommitInfo)(nil),           // 12: delta.CommitInfo
-	(*HistoryResponse)(nil),      // 13: delta.HistoryResponse
-	(*OptimizeRequest)(nil),      // 14: delta.OptimizeRequest
-	(*OptimizeResponse)(nil),     // 15: delta.OptimizeResponse
-	(*VacuumRequest)(nil),        // 16: delta.VacuumRequest
-	(*VacuumResponse)(nil),       // 17: delta.VacuumResponse
+	(*HealthRequest)(nil),                      // 0: delta.HealthRequest
+	(*HealthResponse)(nil),                     // 1: delta.HealthResponse
+	(*ColumnDef)(nil),                          // 2: delta.ColumnDef
+	(*CreateTableRequest)(nil),                 // 3: delta.CreateTableRequest
+	(*CreateTableResponse)(nil),                // 4: delta.CreateTableResponse
+	(*WriteRequest)(nil),                       // 5: delta.WriteRequest
+	(*WriteResponse)(nil),                      // 6: delta.WriteResponse
+	(*ReadRequest)(nil),                        // 7: delta.ReadRequest
+	(*ReadResponse)(nil),                       // 8: delta.ReadResponse
+	(*GetTableInfoRequest)(nil),                // 9: delta.GetTableInfoRequest
+	(*GetTableInfoResponse)(nil),               // 10: delta.GetTableInfoResponse
+	(*HistoryRequest)(nil),                     // 11: delta.HistoryRequest
+	(*CommitInfo)(nil),                         // 12: delta.CommitInfo
+	(*HistoryResponse)(nil),                    // 13: delta.HistoryResponse
+	(*OptimizeRequest)(nil),                    // 14: delta.OptimizeRequest
+	(*OptimizeResponse)(nil),                   // 15: delta.OptimizeResponse
+	(*RewriteCheckpointMultipartRequest)(nil),  // 16: delta.RewriteCheckpointMultipartRequest
+	(*RewriteCheckpointMultipartResponse)(nil), // 17: delta.RewriteCheckpointMultipartResponse
+	(*VacuumRequest)(nil),                      // 18: delta.VacuumRequest
+	(*VacuumResponse)(nil),                     // 19: delta.VacuumResponse
 }
 var file_delta_proto_depIdxs = []int32{
 	2,  // 0: delta.CreateTableRequest.schema:type_name -> delta.ColumnDef
@@ -1190,18 +1456,20 @@ var file_delta_proto_depIdxs = []int32{
 	7,  // 7: delta.DeltaService.Read:input_type -> delta.ReadRequest
 	9,  // 8: delta.DeltaService.GetTableInfo:input_type -> delta.GetTableInfoRequest
 	11, // 9: delta.DeltaService.History:input_type -> delta.HistoryRequest
-	16, // 10: delta.DeltaService.Vacuum:input_type -> delta.VacuumRequest
+	18, // 10: delta.DeltaService.Vacuum:input_type -> delta.VacuumRequest
 	14, // 11: delta.DeltaService.Optimize:input_type -> delta.OptimizeRequest
-	1,  // 12: delta.DeltaService.Health:output_type -> delta.HealthResponse
-	4,  // 13: delta.DeltaService.CreateTable:output_type -> delta.CreateTableResponse
-	6,  // 14: delta.DeltaService.Write:output_type -> delta.WriteResponse
-	8,  // 15: delta.DeltaService.Read:output_type -> delta.ReadResponse
-	10, // 16: delta.DeltaService.GetTableInfo:output_type -> delta.GetTableInfoResponse
-	13, // 17: delta.DeltaService.History:output_type -> delta.HistoryResponse
-	17, // 18: delta.DeltaService.Vacuum:output_type -> delta.VacuumResponse
-	15, // 19: delta.DeltaService.Optimize:output_type -> delta.OptimizeResponse
-	12, // [12:20] is the sub-list for method output_type
-	4,  // [4:12] is the sub-list for method input_type
+	16, // 12: delta.DeltaService.RewriteCheckpointMultipart:input_type -> delta.RewriteCheckpointMultipartRequest
+	1,  // 13: delta.DeltaService.Health:output_type -> delta.HealthResponse
+	4,  // 14: delta.DeltaService.CreateTable:output_type -> delta.CreateTableResponse
+	6,  // 15: delta.DeltaService.Write:output_type -> delta.WriteResponse
+	8,  // 16: delta.DeltaService.Read:output_type -> delta.ReadResponse
+	10, // 17: delta.DeltaService.GetTableInfo:output_type -> delta.GetTableInfoResponse
+	13, // 18: delta.DeltaService.History:output_type -> delta.HistoryResponse
+	19, // 19: delta.DeltaService.Vacuum:output_type -> delta.VacuumResponse
+	15, // 20: delta.DeltaService.Optimize:output_type -> delta.OptimizeResponse
+	17, // 21: delta.DeltaService.RewriteCheckpointMultipart:output_type -> delta.RewriteCheckpointMultipartResponse
+	13, // [13:22] is the sub-list for method output_type
+	4,  // [4:13] is the sub-list for method input_type
 	4,  // [4:4] is the sub-list for extension type_name
 	4,  // [4:4] is the sub-list for extension extendee
 	0,  // [0:4] is the sub-list for field type_name
@@ -1218,7 +1486,7 @@ func file_delta_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_delta_proto_rawDesc), len(file_delta_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   18,
+			NumMessages:   20,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

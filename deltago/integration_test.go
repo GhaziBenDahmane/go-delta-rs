@@ -176,6 +176,74 @@ func TestIntegration_WriteOverwrite(t *testing.T) {
 	}
 }
 
+func TestIntegration_WriteOverwriteCreatesMissingTable(t *testing.T) {
+	_, c := newTestSidecar(t)
+	ctx := context.Background()
+	uri := tempTableURI(t)
+
+	replacement := []deltago.Row{{"id": 99, "name": "zara", "score": 10.0}}
+	if err := c.Write(ctx, uri, deltago.WriteOverwrite, replacement, testSchema); err != nil {
+		t.Fatalf("Overwrite missing table: %v", err)
+	}
+
+	got, err := c.Read(ctx, uri, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 {
+		t.Errorf("after overwrite create expected 1 row, got %d", len(got))
+	}
+}
+
+func TestIntegration_WriteWithOptionsSkipsDuplicateAppTransaction(t *testing.T) {
+	_, c := newTestSidecar(t)
+	ctx := context.Background()
+	uri := tempTableURI(t)
+
+	if err := c.CreateTable(ctx, uri, testSchema, nil); err != nil {
+		t.Fatal(err)
+	}
+
+	rows := []deltago.Row{
+		{"id": 1, "name": "alice", "score": 9.5},
+		{"id": 2, "name": "bob", "score": 7.2},
+	}
+	opts := &deltago.WriteOptions{
+		BatchID:               "integration-batch-1",
+		AppTransactionID:      "integration-batch-1",
+		AppTransactionVersion: 1,
+	}
+	first, err := c.WriteResult(ctx, uri, deltago.WriteAppend, rows, testSchema, opts)
+	if err != nil {
+		t.Fatalf("first WriteResult: %v", err)
+	}
+	if first.AlreadyCommitted {
+		t.Fatal("first write should not be marked already committed")
+	}
+	if first.RowsWritten != 2 {
+		t.Fatalf("first RowsWritten = %d, want 2", first.RowsWritten)
+	}
+
+	second, err := c.WriteResult(ctx, uri, deltago.WriteAppend, rows, testSchema, opts)
+	if err != nil {
+		t.Fatalf("duplicate WriteResult: %v", err)
+	}
+	if !second.AlreadyCommitted {
+		t.Fatal("duplicate write should be marked already committed")
+	}
+	if second.RowsWritten != 0 {
+		t.Fatalf("duplicate RowsWritten = %d, want 0", second.RowsWritten)
+	}
+
+	got, err := c.Read(ctx, uri, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 2 {
+		t.Errorf("duplicate app transaction should not add rows, got %d rows", len(got))
+	}
+}
+
 // ── Read with options ─────────────────────────────────────────────────────────
 
 func TestIntegration_Read_Filter(t *testing.T) {

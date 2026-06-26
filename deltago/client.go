@@ -61,17 +61,43 @@ func (c *DeltaClient) EnsureTable(ctx context.Context, tableURI string, schema [
 // Write appends or overwrites rows in the Delta table at tableURI.
 // schema may be nil — if omitted the server infers all columns as strings.
 func (c *DeltaClient) Write(ctx context.Context, tableURI string, mode WriteMode, rows []Row, schema []Column) error {
+	_, err := c.WriteResult(ctx, tableURI, mode, rows, schema, nil)
+	return err
+}
+
+// WriteWithOptions appends or overwrites rows with optional idempotency metadata.
+func (c *DeltaClient) WriteWithOptions(ctx context.Context, tableURI string, mode WriteMode, rows []Row, schema []Column, opts *WriteOptions) error {
+	_, err := c.WriteResult(ctx, tableURI, mode, rows, schema, opts)
+	return err
+}
+
+// WriteResult appends or overwrites rows and returns write metadata.
+func (c *DeltaClient) WriteResult(ctx context.Context, tableURI string, mode WriteMode, rows []Row, schema []Column, opts *WriteOptions) (*WriteResult, error) {
 	jsonData, err := MarshalRows(rows)
 	if err != nil {
-		return fmt.Errorf("marshal rows: %w", err)
+		return nil, fmt.Errorf("marshal rows: %w", err)
 	}
-	_, err = c.client.Write(ctx, &deltapb.WriteRequest{
+	req := &deltapb.WriteRequest{
 		TableUri: tableURI,
 		Mode:     string(mode),
 		JsonData: jsonData,
 		Schema:   toProtoCols(schema),
-	})
-	return err
+	}
+	if opts != nil {
+		req.BatchId = opts.BatchID
+		req.AppTransactionId = opts.AppTransactionID
+		req.AppTransactionVersion = opts.AppTransactionVersion
+	}
+	resp, err := c.client.Write(ctx, req)
+	if err != nil {
+		return nil, err
+	}
+	return &WriteResult{
+		Version:          resp.Version,
+		RowsWritten:      resp.RowsWritten,
+		AlreadyCommitted: resp.AlreadyCommitted,
+		BatchID:          resp.BatchId,
+	}, nil
 }
 
 // Read reads rows from the Delta table at tableURI.
@@ -173,9 +199,38 @@ func (c *DeltaClient) Optimize(ctx context.Context, tableURI string, opts *Optim
 		return nil, err
 	}
 	return &OptimizeResult{
-		FilesAdded:            resp.FilesAdded,
-		FilesRemoved:          resp.FilesRemoved,
-		PartitionsOptimized:   resp.PartitionsOptimized,
+		FilesAdded:          resp.FilesAdded,
+		FilesRemoved:        resp.FilesRemoved,
+		PartitionsOptimized: resp.PartitionsOptimized,
+	}, nil
+}
+
+// RewriteCheckpointMultipart rewrites the latest Delta checkpoint as multipart
+// parquet files. Run this as maintenance with writers stopped; Delta readers can
+// fail while final checkpoint objects are being swapped in _delta_log.
+func (c *DeltaClient) RewriteCheckpointMultipart(ctx context.Context, tableURI string, opts *RewriteCheckpointOptions) (*RewriteCheckpointResult, error) {
+	req := &deltapb.RewriteCheckpointMultipartRequest{TableUri: tableURI}
+	if opts != nil {
+		req.TargetPartSizeBytes = opts.TargetPartSizeBytes
+		req.TargetParts = opts.TargetParts
+		req.DryRun = opts.DryRun
+	}
+	resp, err := c.client.RewriteCheckpointMultipart(ctx, req)
+	if err != nil {
+		return nil, err
+	}
+	return &RewriteCheckpointResult{
+		Version:          resp.Version,
+		SourceParts:      resp.SourceParts,
+		TargetParts:      resp.TargetParts,
+		SourceSizeBytes:  resp.SourceSizeBytes,
+		TargetSizeBytes:  resp.TargetSizeBytes,
+		MaxPartSizeBytes: resp.MaxPartSizeBytes,
+		Rows:             resp.Rows,
+		Rewritten:        resp.Rewritten,
+		BackupPrefix:     resp.BackupPrefix,
+		CheckpointFiles:  resp.CheckpointFiles,
+		Message:          resp.Message,
 	}, nil
 }
 

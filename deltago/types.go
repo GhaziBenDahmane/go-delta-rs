@@ -38,6 +38,25 @@ type CommitInfo struct {
 // Row is a single table row represented as a map of column name → value.
 type Row = map[string]any
 
+// WriteOptions controls optional write idempotency and diagnostics.
+type WriteOptions struct {
+	// BatchID is written to Delta commit metadata and echoed in write diagnostics.
+	BatchID string
+	// AppTransactionID enables Delta application transaction based idempotency.
+	// Use a stable value for a logical batch.
+	AppTransactionID string
+	// AppTransactionVersion must be positive when AppTransactionID is set.
+	AppTransactionVersion int64
+}
+
+// WriteResult contains metadata returned by a write call.
+type WriteResult struct {
+	Version          int64
+	RowsWritten      int64
+	AlreadyCommitted bool
+	BatchID          string
+}
+
 // OptimizeOptions controls file compaction behaviour.
 type OptimizeOptions struct {
 	// TargetSizeBytes is the desired output file size. 0 = server default (256 MiB).
@@ -57,6 +76,32 @@ type OptimizeResult struct {
 	FilesAdded          int64
 	FilesRemoved        int64
 	PartitionsOptimized int64
+}
+
+// RewriteCheckpointOptions controls checkpoint repartitioning.
+type RewriteCheckpointOptions struct {
+	// TargetPartSizeBytes is the desired maximum checkpoint part size. 0 = server default.
+	TargetPartSizeBytes int64
+	// TargetParts explicitly sets the number of checkpoint parts. When >0 it
+	// takes precedence over TargetPartSizeBytes.
+	TargetParts int32
+	// DryRun previews the rewrite plan without writing objects.
+	DryRun bool
+}
+
+// RewriteCheckpointResult contains the checkpoint rewrite metrics.
+type RewriteCheckpointResult struct {
+	Version          int64
+	SourceParts      int32
+	TargetParts      int32
+	SourceSizeBytes  int64
+	TargetSizeBytes  int64
+	MaxPartSizeBytes int64
+	Rows             int64
+	Rewritten        bool
+	BackupPrefix     string
+	CheckpointFiles  []string
+	Message          string
 }
 
 // MarshalRows serialises a slice of Row to a JSON array string.
