@@ -20,10 +20,12 @@ arrow-json = "53"
 bytes = "1"
 parquet = "53"
 anyhow = "1"
+futures = "0.3"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 chrono = "0.4"
 tikv-jemallocator = "0.6"
+tikv-jemalloc-sys = "0.6"
 
 [build-dependencies]
 tonic-build = "0.12"

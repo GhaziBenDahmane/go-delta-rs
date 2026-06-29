@@ -1,8 +1,10 @@
 use std::collections::HashMap;
+use std::ffi::{c_void, CString};
 use std::io::Cursor;
 use std::ops::Range;
+use std::ptr;
 use std::sync::{Arc, OnceLock};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use arrow::datatypes::{DataType as ArrowType, Field, Schema, SchemaRef, TimeUnit};
 use arrow::record_batch::RecordBatch;
@@ -14,8 +16,9 @@ use deltalake::kernel::{DataType as DeltaType, PrimitiveType, StructField, Trans
 use deltalake::operations::transaction::CommitProperties;
 use deltalake::operations::vacuum::VacuumBuilder;
 use deltalake::protocol::SaveMode;
-use deltalake::storage::object_store::{path::Path as OsPath, ObjectMeta, ObjectStore};
+use deltalake::storage::object_store::{path::Path as OsPath, ObjectMeta, ObjectStore, PutMode};
 use deltalake::{DeltaOps, DeltaTable};
+use futures::StreamExt;
 use parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder;
 use parquet::arrow::ArrowWriter;
 use parquet::basic::Compression;
@@ -27,10 +30,13 @@ use tonic::{Request, Response, Status};
 use tracing::{info, warn};
 
 use crate::delta_proto::{
-    delta_service_server::DeltaService, ColumnDef, CommitInfo, CreateTableRequest,
-    CreateTableResponse, GetTableInfoRequest, GetTableInfoResponse, HealthRequest, HealthResponse,
-    HistoryRequest, HistoryResponse, OptimizeRequest, OptimizeResponse, ReadRequest, ReadResponse,
-    RewriteCheckpointMultipartRequest, RewriteCheckpointMultipartResponse, VacuumRequest,
+    delta_service_server::DeltaService, CapabilityCheck, ClearTableCacheRequest,
+    ClearTableCacheResponse, ColumnDef, CommitInfo, CreateTableRequest, CreateTableResponse,
+    DeleteRequest, DeleteResponse, GetTableInfoRequest, GetTableInfoResponse, HealthRequest,
+    HealthResponse, HistoryRequest, HistoryResponse, MemoryStats, OptimizeRequest,
+    OptimizeResponse, ReadRequest, ReadResponse, ReleaseMemoryRequest, ReleaseMemoryResponse,
+    RewriteCheckpointMultipartRequest, RewriteCheckpointMultipartResponse, RuntimeStatsRequest,
+    RuntimeStatsResponse, StorageCapabilitiesRequest, StorageCapabilitiesResponse, VacuumRequest,
     VacuumResponse, WriteRequest, WriteResponse,
 };
 
@@ -68,6 +74,26 @@ fn proto_to_delta_field(col: &ColumnDef) -> StructField {
         _ => DeltaType::Primitive(PrimitiveType::String),
     };
     StructField::new(col.name.clone(), dt, col.nullable)
+}
+
+/// Convert an Arrow Field into a delta-rs kernel StructField.
+fn arrow_to_delta_field(field: &Field) -> StructField {
+    let dt = match field.data_type() {
+        ArrowType::Utf8 | ArrowType::LargeUtf8 => DeltaType::Primitive(PrimitiveType::String),
+        ArrowType::Int8 | ArrowType::Int16 | ArrowType::Int32 => {
+            DeltaType::Primitive(PrimitiveType::Integer)
+        }
+        ArrowType::UInt8 | ArrowType::UInt16 | ArrowType::UInt32 | ArrowType::Int64 => {
+            DeltaType::Primitive(PrimitiveType::Long)
+        }
+        ArrowType::Float16 | ArrowType::Float32 => DeltaType::Primitive(PrimitiveType::Float),
+        ArrowType::Float64 => DeltaType::Primitive(PrimitiveType::Double),
+        ArrowType::Boolean => DeltaType::Primitive(PrimitiveType::Boolean),
+        ArrowType::Timestamp(_, _) => DeltaType::Primitive(PrimitiveType::TimestampNtz),
+        ArrowType::Date32 | ArrowType::Date64 => DeltaType::Primitive(PrimitiveType::Date),
+        _ => DeltaType::Primitive(PrimitiveType::String),
+    };
+    StructField::new(field.name().clone(), dt, field.is_nullable())
 }
 
 /// Convert a delta-rs kernel StructField into a proto ColumnDef (used for GetTableInfo).
@@ -121,11 +147,216 @@ fn is_retryable_storage_error(message: &str) -> bool {
     .any(|fragment| lower.contains(fragment))
 }
 
+fn delta_error_code(message: &str) -> &'static str {
+    let lower = message.to_ascii_lowercase();
+    if lower.contains("copy-if-not-exists") {
+        return "copy_if_not_exists_unsupported";
+    }
+    if lower.contains("no files in log segment")
+        || lower.contains("not a delta table")
+        || lower.contains("no log files")
+    {
+        return "not_delta_table";
+    }
+    if lower.contains("commit conflict") || lower.contains("concurrent transaction") {
+        return "commit_conflict";
+    }
+    if lower.contains("timeout") || lower.contains("timed out") || lower.contains("deadline") {
+        return "timeout";
+    }
+    if lower.contains("connection reset") || lower.contains("broken pipe") {
+        return "connection_lost";
+    }
+    if lower.contains("failed to parse parquet") {
+        return "parquet_parse";
+    }
+    if lower.contains("failed to read delta log object") {
+        return "delta_log_read";
+    }
+    "internal"
+}
+
 fn delta_status(phase: &str, table_uri: &str, message: &str) -> Status {
     let retryable = is_retryable_storage_error(message);
+    let ambiguous = phase == "commit" && retryable;
+    let code = delta_error_code(message);
     Status::internal(format!(
-        "delta_error phase={phase} retryable={retryable} table_uri={table_uri} message={message}"
+        "delta_error phase={phase} code={code} retryable={retryable} ambiguous={ambiguous} table_uri={table_uri} message={message}"
     ))
+}
+
+fn capability_ok(name: &str) -> CapabilityCheck {
+    CapabilityCheck {
+        name: name.to_string(),
+        supported: true,
+        error: String::new(),
+    }
+}
+
+fn capability_err(name: &str, error: impl std::fmt::Display) -> CapabilityCheck {
+    CapabilityCheck {
+        name: name.to_string(),
+        supported: false,
+        error: error.to_string(),
+    }
+}
+
+async fn cleanup_probe_paths(object_store: &Arc<dyn ObjectStore>, paths: &[OsPath]) {
+    for path in paths {
+        if let Err(error) = object_store.delete(path).await {
+            warn!(
+                object_path = path.as_ref(),
+                error = %error,
+                "storage capability probe cleanup failed"
+            );
+        }
+    }
+}
+
+fn mallctl_name(name: &str) -> Option<CString> {
+    CString::new(name).ok()
+}
+
+fn jemalloc_refresh_epoch() {
+    let Some(name) = mallctl_name("epoch") else {
+        return;
+    };
+    let mut epoch: u64 = 1;
+    unsafe {
+        tikv_jemalloc_sys::mallctl(
+            name.as_ptr(),
+            ptr::null_mut(),
+            ptr::null_mut(),
+            (&mut epoch as *mut u64).cast::<c_void>(),
+            std::mem::size_of::<u64>(),
+        );
+    }
+}
+
+fn jemalloc_read_usize(name: &str) -> u64 {
+    let Some(name) = mallctl_name(name) else {
+        return 0;
+    };
+    let mut value: usize = 0;
+    let mut size = std::mem::size_of::<usize>();
+    let result = unsafe {
+        tikv_jemalloc_sys::mallctl(
+            name.as_ptr(),
+            (&mut value as *mut usize).cast::<c_void>(),
+            &mut size,
+            ptr::null_mut(),
+            0,
+        )
+    };
+    if result == 0 {
+        value as u64
+    } else {
+        0
+    }
+}
+
+fn jemalloc_read_u32(name: &str) -> Option<u32> {
+    let Some(name) = mallctl_name(name) else {
+        return None;
+    };
+    let mut value: u32 = 0;
+    let mut size = std::mem::size_of::<u32>();
+    let result = unsafe {
+        tikv_jemalloc_sys::mallctl(
+            name.as_ptr(),
+            (&mut value as *mut u32).cast::<c_void>(),
+            &mut size,
+            ptr::null_mut(),
+            0,
+        )
+    };
+    if result == 0 {
+        Some(value)
+    } else {
+        None
+    }
+}
+
+fn jemalloc_call(name: &str) -> bool {
+    let Some(name) = mallctl_name(name) else {
+        return false;
+    };
+    unsafe {
+        tikv_jemalloc_sys::mallctl(
+            name.as_ptr(),
+            ptr::null_mut(),
+            ptr::null_mut(),
+            ptr::null_mut(),
+            0,
+        ) == 0
+    }
+}
+
+fn runtime_memory_stats() -> MemoryStats {
+    jemalloc_refresh_epoch();
+    MemoryStats {
+        allocated_bytes: jemalloc_read_usize("stats.allocated"),
+        active_bytes: jemalloc_read_usize("stats.active"),
+        resident_bytes: jemalloc_read_usize("stats.resident"),
+        mapped_bytes: jemalloc_read_usize("stats.mapped"),
+        retained_bytes: jemalloc_read_usize("stats.retained"),
+    }
+}
+
+fn release_jemalloc_memory() -> bool {
+    let Some(narenas) = jemalloc_read_u32("arenas.narenas") else {
+        return false;
+    };
+    let mut purged_any = false;
+    for arena in 0..narenas {
+        purged_any |= jemalloc_call(&format!("arena.{arena}.purge"));
+    }
+    jemalloc_refresh_epoch();
+    purged_any
+}
+
+fn memory_purge_interval() -> Option<Duration> {
+    static INTERVAL: OnceLock<Option<Duration>> = OnceLock::new();
+    *INTERVAL.get_or_init(|| {
+        if let Some(duration) = std::env::var("DELTA_MEMORY_PURGE_INTERVAL_SECONDS")
+            .ok()
+            .and_then(|value| value.parse::<u64>().ok())
+            .filter(|seconds| *seconds > 0)
+            .map(Duration::from_secs)
+        {
+            return Some(duration);
+        }
+        match runtime_profile() {
+            Some("low_rss") => Some(Duration::from_secs(60)),
+            Some("minimum_memory") => Some(Duration::from_secs(30)),
+            _ => None,
+        }
+    })
+}
+
+fn start_periodic_memory_purge() {
+    static STARTED: OnceLock<()> = OnceLock::new();
+    STARTED.get_or_init(|| {
+        if let Some(interval) = memory_purge_interval() {
+            tokio::spawn(async move {
+                let mut ticker = tokio::time::interval(interval);
+                loop {
+                    ticker.tick().await;
+                    let before = runtime_memory_stats();
+                    if release_jemalloc_memory() {
+                        let after = runtime_memory_stats();
+                        info!(
+                            allocated_before = before.allocated_bytes,
+                            resident_before = before.resident_bytes,
+                            allocated_after = after.allocated_bytes,
+                            resident_after = after.resident_bytes,
+                            "jemalloc memory purge completed"
+                        );
+                    }
+                }
+            });
+        }
+    });
 }
 
 fn bytes_preview(bytes: &[u8]) -> String {
@@ -413,13 +644,82 @@ fn storage_options() -> &'static HashMap<String, String> {
     static OPTS: OnceLock<HashMap<String, String>> = OnceLock::new();
     OPTS.get_or_init(|| {
         let mut m = HashMap::new();
-        if let Ok(v) = std::env::var("AWS_CONDITIONAL_PUT") {
-            m.insert("conditional_put".to_string(), v);
+        apply_s3_commit_mode(&mut m);
+        if !m.contains_key("conditional_put") {
+            if let Ok(v) = std::env::var("AWS_CONDITIONAL_PUT")
+                .or_else(|_| std::env::var("AWS_S3_CONDITIONAL_PUT"))
+            {
+                m.insert("conditional_put".to_string(), v);
+            }
         }
-        if let Ok(v) = std::env::var("AWS_S3_ALLOW_UNSAFE_RENAME") {
-            m.insert("AWS_S3_ALLOW_UNSAFE_RENAME".to_string(), v);
+        if !m.contains_key("copy_if_not_exists") {
+            if let Ok(v) = std::env::var("AWS_COPY_IF_NOT_EXISTS")
+                .or_else(|_| std::env::var("AWS_S3_COPY_IF_NOT_EXISTS"))
+            {
+                m.insert("copy_if_not_exists".to_string(), v);
+            }
+        }
+        if let Ok(v) = std::env::var("AWS_CHECKSUM_ALGORITHM") {
+            m.insert("checksum_algorithm".to_string(), v);
+        }
+        if !m.contains_key("AWS_S3_ALLOW_UNSAFE_RENAME") {
+            if let Ok(v) = std::env::var("AWS_S3_ALLOW_UNSAFE_RENAME") {
+                m.insert("AWS_S3_ALLOW_UNSAFE_RENAME".to_string(), v);
+            }
         }
         m
+    })
+}
+
+fn apply_s3_commit_mode(options: &mut HashMap<String, String>) {
+    let raw_mode = match std::env::var("DELTA_S3_COMMIT_MODE") {
+        Ok(mode) => mode.trim().to_string(),
+        Err(_) => return,
+    };
+    let mode = raw_mode.to_ascii_lowercase();
+    if mode.is_empty() {
+        return;
+    }
+    if mode == "unsafe_rename" {
+        options.insert("AWS_S3_ALLOW_UNSAFE_RENAME".to_string(), "true".to_string());
+    } else if mode == "etag" || mode == "conditional_put:etag" {
+        options.insert("conditional_put".to_string(), "etag".to_string());
+    } else if mode == "multipart" || mode == "copy_if_not_exists:multipart" {
+        options.insert("copy_if_not_exists".to_string(), "multipart".to_string());
+    } else if mode.starts_with("dynamo:") {
+        options.insert("conditional_put".to_string(), raw_mode.clone());
+        options.insert("copy_if_not_exists".to_string(), raw_mode);
+    } else if mode.strip_prefix("conditional_put:").is_some() {
+        options.insert(
+            "conditional_put".to_string(),
+            raw_mode["conditional_put:".len()..].to_string(),
+        );
+    } else if mode.strip_prefix("copy_if_not_exists:").is_some() {
+        options.insert(
+            "copy_if_not_exists".to_string(),
+            raw_mode["copy_if_not_exists:".len()..].to_string(),
+        );
+    } else {
+        warn!(mode, "unsupported DELTA_S3_COMMIT_MODE ignored");
+    }
+}
+
+fn runtime_profile() -> Option<&'static str> {
+    static PROFILE: OnceLock<Option<&'static str>> = OnceLock::new();
+    *PROFILE.get_or_init(|| {
+        std::env::var("DELTA_RUNTIME_PROFILE")
+            .ok()
+            .map(|value| value.trim().to_ascii_lowercase())
+            .filter(|value| !value.is_empty())
+            .map(|value| match value.as_str() {
+                "low_rss" => "low_rss",
+                "minimum_memory" => "minimum_memory",
+                "balanced" => "balanced",
+                other => {
+                    warn!(profile = other, "unsupported DELTA_RUNTIME_PROFILE ignored");
+                    "balanced"
+                }
+            })
     })
 }
 
@@ -458,6 +758,34 @@ fn table_load_retry_backoff_ms(attempt: usize) -> u64 {
         .unwrap_or(500);
     let capped_attempt = attempt.min(5) as u32;
     base.saturating_mul(2_u64.saturating_pow(capped_attempt))
+}
+
+fn table_cache_max_entries() -> usize {
+    static MAX_ENTRIES: OnceLock<usize> = OnceLock::new();
+    *MAX_ENTRIES.get_or_init(|| {
+        if let Some(value) = std::env::var("DELTA_TABLE_CACHE_MAX_ENTRIES")
+            .ok()
+            .and_then(|value| value.parse::<usize>().ok())
+        {
+            return value;
+        }
+        match runtime_profile() {
+            Some("low_rss") => 2,
+            Some("minimum_memory") => 0,
+            _ => 64,
+        }
+    })
+}
+
+fn table_cache_ttl() -> Option<Duration> {
+    static TTL: OnceLock<Option<Duration>> = OnceLock::new();
+    *TTL.get_or_init(|| {
+        std::env::var("DELTA_TABLE_CACHE_TTL_SECONDS")
+            .ok()
+            .and_then(|value| value.parse::<u64>().ok())
+            .filter(|seconds| *seconds > 0)
+            .map(Duration::from_secs)
+    })
 }
 
 fn table_builder(table_uri: &str) -> deltalake::DeltaTableBuilder {
@@ -771,8 +1099,13 @@ fn write_checkpoint_parts(
     Ok((parts, total_rows))
 }
 
+struct CachedTable {
+    table: DeltaTable,
+    last_used: Instant,
+}
+
 pub struct DeltaServiceImpl {
-    tables: Arc<RwLock<HashMap<String, DeltaTable>>>,
+    tables: Arc<RwLock<HashMap<String, CachedTable>>>,
 }
 
 async fn load_cached_table_with_retry(
@@ -834,23 +1167,93 @@ async fn load_fresh_table_with_retry(table_uri: &str) -> Result<DeltaTable, Stri
 
 impl DeltaServiceImpl {
     pub fn new() -> Self {
+        start_periodic_memory_purge();
         Self {
             tables: Arc::new(RwLock::new(HashMap::new())),
+        }
+    }
+
+    fn prune_table_cache_locked(cache: &mut HashMap<String, CachedTable>) -> usize {
+        let mut removed = 0usize;
+        let max_entries = table_cache_max_entries();
+        if max_entries == 0 {
+            removed = cache.len();
+            cache.clear();
+            return removed;
+        }
+
+        if let Some(ttl) = table_cache_ttl() {
+            let now = Instant::now();
+            let before = cache.len();
+            cache.retain(|_, entry| now.duration_since(entry.last_used) <= ttl);
+            removed += before.saturating_sub(cache.len());
+        }
+
+        if cache.len() > max_entries {
+            let mut entries: Vec<(String, Instant)> = cache
+                .iter()
+                .map(|(uri, entry)| (uri.clone(), entry.last_used))
+                .collect();
+            entries.sort_by_key(|(_, last_used)| *last_used);
+            let overflow = cache.len() - max_entries;
+            for (uri, _) in entries.into_iter().take(overflow) {
+                if cache.remove(&uri).is_some() {
+                    removed += 1;
+                }
+            }
+        }
+        removed
+    }
+
+    async fn prune_table_cache(&self) -> usize {
+        let mut cache = self.tables.write().await;
+        Self::prune_table_cache_locked(&mut cache)
+    }
+
+    async fn table_cache_entries(&self) -> usize {
+        let cache = self.tables.read().await;
+        cache.len()
+    }
+
+    async fn insert_cached_table(&self, table_uri: &str, table: DeltaTable) {
+        let max_entries = table_cache_max_entries();
+        if max_entries == 0 {
+            return;
+        }
+        let mut cache = self.tables.write().await;
+        cache.insert(
+            table_uri.to_string(),
+            CachedTable {
+                table,
+                last_used: Instant::now(),
+            },
+        );
+        let removed = Self::prune_table_cache_locked(&mut cache);
+        if removed > 0 {
+            info!(
+                removed,
+                entries = cache.len(),
+                "delta table cache pruned after insert"
+            );
         }
     }
 
     /// Get a cached table or open it fresh. On cache hit, only loads new commits
     /// since the cached version (incremental refresh instead of full checkpoint download).
     async fn get_or_open_table(&self, table_uri: &str) -> Result<DeltaTable, Status> {
-        {
+        self.prune_table_cache().await;
+
+        if table_cache_max_entries() > 0 {
             let mut cache = self.tables.write().await;
-            if let Some(table) = cache.get_mut(table_uri) {
+            if let Some(entry) = cache.get_mut(table_uri) {
                 // Incremental load — only reads commits newer than cached version
-                if let Err(error) = load_cached_table_with_retry(table_uri, table).await {
+                if let Err(error) = load_cached_table_with_retry(table_uri, &mut entry.table).await
+                {
                     log_table_load_diag(table_uri, "cached_load", &error).await;
                     return Err(delta_status("cached_load", table_uri, &error));
                 }
-                return Ok(table.clone());
+                entry.last_used = Instant::now();
+                return Ok(entry.table.clone());
             }
         }
 
@@ -862,8 +1265,7 @@ impl DeltaServiceImpl {
                 return Err(delta_status("cold_open", table_uri, &error));
             }
         };
-        let mut cache = self.tables.write().await;
-        cache.insert(table_uri.to_string(), table.clone());
+        self.insert_cached_table(table_uri, table.clone()).await;
         Ok(table)
     }
 
@@ -876,8 +1278,74 @@ impl DeltaServiceImpl {
 
     /// Update the cached table after a successful write.
     async fn update_cached_table(&self, table_uri: &str, table: DeltaTable) {
-        let mut cache = self.tables.write().await;
-        cache.insert(table_uri.to_string(), table);
+        self.insert_cached_table(table_uri, table).await;
+    }
+
+    async fn create_table_if_missing(
+        &self,
+        table_uri: &str,
+        columns: Vec<StructField>,
+        partition_columns: &[String],
+    ) -> Result<(), Status> {
+        match DeltaOps::try_from_uri_with_storage_options(table_uri, storage_options().clone())
+            .await
+            .map_err(|error| delta_status("create_table", table_uri, &error.to_string()))?
+            .create()
+            .with_columns(columns)
+            .with_partition_columns(partition_columns.to_vec())
+            .await
+        {
+            Ok(_) => {
+                self.evict_table(table_uri).await;
+                Ok(())
+            }
+            Err(error) => {
+                let msg = error.to_string().to_lowercase();
+                if msg.contains("already exists")
+                    || msg.contains("table already")
+                    || msg.contains("table version")
+                {
+                    Ok(())
+                } else {
+                    Err(delta_status("create_table", table_uri, &error.to_string()))
+                }
+            }
+        }
+    }
+
+    async fn verify_app_transaction_committed(
+        &self,
+        table_uri: &str,
+        app_transaction_id: &str,
+        app_transaction_version: i64,
+    ) -> Option<DeltaTable> {
+        if app_transaction_id.is_empty() || app_transaction_version <= 0 {
+            return None;
+        }
+        match load_fresh_table_with_retry(table_uri).await {
+            Ok(table) => {
+                let committed = table
+                    .get_app_transaction_version()
+                    .get(app_transaction_id)
+                    .map(|txn| txn.version >= app_transaction_version)
+                    .unwrap_or(false);
+                if committed {
+                    Some(table)
+                } else {
+                    None
+                }
+            }
+            Err(error) => {
+                warn!(
+                    uri = table_uri,
+                    app_transaction_id,
+                    app_transaction_version,
+                    error = %error,
+                    "failed to verify app transaction after write error"
+                );
+                None
+            }
+        }
     }
 }
 
@@ -891,6 +1359,66 @@ impl DeltaService for DeltaServiceImpl {
         Ok(Response::new(HealthResponse {
             status: "ok".into(),
             version: env!("CARGO_PKG_VERSION").into(),
+        }))
+    }
+
+    // ── Runtime / Memory ─────────────────────────────────────────────────────
+    async fn runtime_stats(
+        &self,
+        _request: Request<RuntimeStatsRequest>,
+    ) -> Result<Response<RuntimeStatsResponse>, Status> {
+        self.prune_table_cache().await;
+        Ok(Response::new(RuntimeStatsResponse {
+            memory: Some(runtime_memory_stats()),
+            table_cache_entries: self.table_cache_entries().await as i64,
+            table_cache_max_entries: table_cache_max_entries() as i64,
+            table_cache_ttl_seconds: table_cache_ttl()
+                .map(|duration| duration.as_secs() as i64)
+                .unwrap_or(0),
+        }))
+    }
+
+    async fn clear_table_cache(
+        &self,
+        request: Request<ClearTableCacheRequest>,
+    ) -> Result<Response<ClearTableCacheResponse>, Status> {
+        let req = request.into_inner();
+        let before = runtime_memory_stats();
+        let removed = {
+            let mut cache = self.tables.write().await;
+            if req.table_uri.is_empty() {
+                let removed = cache.len();
+                cache.clear();
+                removed
+            } else if cache.remove(&req.table_uri).is_some() {
+                1
+            } else {
+                0
+            }
+        };
+
+        if req.release_memory {
+            release_jemalloc_memory();
+        }
+        let after = runtime_memory_stats();
+        Ok(Response::new(ClearTableCacheResponse {
+            tables_removed: removed as i64,
+            table_cache_entries: self.table_cache_entries().await as i64,
+            memory_before: Some(before),
+            memory_after: Some(after),
+        }))
+    }
+
+    async fn release_memory(
+        &self,
+        _request: Request<ReleaseMemoryRequest>,
+    ) -> Result<Response<ReleaseMemoryResponse>, Status> {
+        let before = runtime_memory_stats();
+        release_jemalloc_memory();
+        let after = runtime_memory_stats();
+        Ok(Response::new(ReleaseMemoryResponse {
+            memory_before: Some(before),
+            memory_after: Some(after),
         }))
     }
 
@@ -977,6 +1505,15 @@ impl DeltaService for DeltaServiceImpl {
             Schema::new(fields)
         };
         let schema_ref = Arc::new(arrow_schema);
+        let create_columns: Vec<StructField> = if req.schema.is_empty() {
+            schema_ref
+                .fields()
+                .iter()
+                .map(|field| arrow_to_delta_field(field))
+                .collect()
+        } else {
+            req.schema.iter().map(proto_to_delta_field).collect()
+        };
 
         // Re-serialize as newline-delimited JSON so arrow-json can parse it.
         let ndjson: String = rows
@@ -1004,6 +1541,22 @@ impl DeltaService for DeltaServiceImpl {
         // first overwrite is allowed to create a new table from an empty URI.
         let table = match self.get_or_open_table(&req.table_uri).await {
             Ok(table) => Some(table),
+            Err(status)
+                if req.create_if_missing
+                    && (status.message().contains("Not a Delta table")
+                        || status.message().contains("not a delta table")
+                        || status.message().contains("no log files")
+                        || status.message().contains("No files in log segment")
+                        || status.message().contains("no files in log segment")) =>
+            {
+                self.create_table_if_missing(
+                    &req.table_uri,
+                    create_columns,
+                    &req.partition_columns,
+                )
+                .await?;
+                Some(self.get_or_open_table(&req.table_uri).await?)
+            }
             Err(status) if is_overwrite && status.message().contains("Not a Delta table") => None,
             Err(status) if is_overwrite && status.message().contains("no log files") => None,
             Err(status) => return Err(status),
@@ -1070,16 +1623,36 @@ impl DeltaService for DeltaServiceImpl {
             let mut commit_properties = CommitProperties::default().with_metadata(metadata);
             if !app_transaction_id.is_empty() {
                 commit_properties = commit_properties.with_application_transaction(
-                    Transaction::new(app_transaction_id, app_transaction_version),
+                    Transaction::new(app_transaction_id.clone(), app_transaction_version),
                 );
             }
             write = write.with_commit_properties(commit_properties);
         }
 
-        let table = write.await.map_err(|error| {
-            let message = error.to_string();
-            delta_status("commit", &req.table_uri, &message)
-        })?;
+        let table = match write.await {
+            Ok(table) => table,
+            Err(error) => {
+                let message = error.to_string();
+                if let Some(table) = self
+                    .verify_app_transaction_committed(
+                        &req.table_uri,
+                        &app_transaction_id,
+                        app_transaction_version,
+                    )
+                    .await
+                {
+                    let version = table.version();
+                    self.update_cached_table(&req.table_uri, table).await;
+                    return Ok(Response::new(WriteResponse {
+                        version,
+                        rows_written: 0,
+                        already_committed: true,
+                        batch_id: req.batch_id,
+                    }));
+                }
+                return Err(delta_status("commit", &req.table_uri, &message));
+            }
+        };
 
         let version = table.version();
         self.update_cached_table(&req.table_uri, table).await;
@@ -1089,6 +1662,45 @@ impl DeltaService for DeltaServiceImpl {
             rows_written: num_rows,
             already_committed: false,
             batch_id: req.batch_id,
+        }))
+    }
+
+    // ── Delete ────────────────────────────────────────────────────────────────
+    async fn delete(
+        &self,
+        request: Request<DeleteRequest>,
+    ) -> Result<Response<DeleteResponse>, Status> {
+        let req = request.into_inner();
+        info!("delete uri={} predicate={:?}", req.table_uri, req.predicate);
+
+        let predicate = req.predicate.trim();
+        if predicate.is_empty() && !req.allow_full_table_delete {
+            return Err(Status::invalid_argument(
+                "empty delete predicate requires allow_full_table_delete=true",
+            ));
+        }
+
+        let table = self.get_or_open_table(&req.table_uri).await?;
+        let mut builder = DeltaOps(table).delete();
+        if !predicate.is_empty() {
+            builder = builder.with_predicate(predicate.to_string());
+        }
+
+        let (table, metrics) = builder
+            .await
+            .map_err(|error| delta_status("delete", &req.table_uri, &error.to_string()))?;
+        let version = table.version();
+        self.update_cached_table(&req.table_uri, table).await;
+
+        Ok(Response::new(DeleteResponse {
+            version,
+            files_added: metrics.num_added_files as i64,
+            files_removed: metrics.num_removed_files as i64,
+            rows_deleted: metrics.num_deleted_rows as i64,
+            rows_copied: metrics.num_copied_rows as i64,
+            execution_time_ms: metrics.execution_time_ms as i64,
+            scan_time_ms: metrics.scan_time_ms as i64,
+            rewrite_time_ms: metrics.rewrite_time_ms as i64,
         }))
     }
 
@@ -1509,6 +2121,193 @@ impl DeltaService for DeltaServiceImpl {
                 .map(|part| part.path.as_ref().to_string())
                 .collect(),
             message: "checkpoint rewritten as multipart".into(),
+        }))
+    }
+
+    // ── Storage Capability Probe ─────────────────────────────────────────────
+    async fn check_storage_capabilities(
+        &self,
+        request: Request<StorageCapabilitiesRequest>,
+    ) -> Result<Response<StorageCapabilitiesResponse>, Status> {
+        let req = request.into_inner();
+        info!("check_storage_capabilities uri={}", req.table_uri);
+
+        let log_store = table_builder(&req.table_uri)
+            .build_storage()
+            .map_err(|error| {
+                delta_status("storage_capabilities", &req.table_uri, &error.to_string())
+            })?;
+        let object_store = log_store.object_store();
+        let probe_id = format!("{}-{}", std::process::id(), Utc::now().timestamp_micros());
+        let probe_prefix = log_store
+            .log_path()
+            .child(format!("_go_delta_rs_capability_probe/{probe_id}"));
+
+        let put_path = probe_prefix.child("put");
+        let conditional_path = probe_prefix.child("conditional-put");
+        let copy_source = probe_prefix.child("copy-source");
+        let copy_dest = probe_prefix.child("copy-dest");
+        let copy_conflict_dest = probe_prefix.child("copy-conflict-dest");
+        let cleanup_paths = vec![
+            put_path.clone(),
+            conditional_path.clone(),
+            copy_source.clone(),
+            copy_dest.clone(),
+            copy_conflict_dest.clone(),
+        ];
+
+        let payload = Bytes::from_static(b"go-delta-rs capability probe");
+        let mut checks = Vec::new();
+
+        match object_store.put(&put_path, payload.clone().into()).await {
+            Ok(_) => checks.push(capability_ok("put")),
+            Err(error) => checks.push(capability_err("put", error)),
+        }
+
+        match object_store.head(&put_path).await {
+            Ok(_) => checks.push(capability_ok("head")),
+            Err(error) => checks.push(capability_err("head", error)),
+        }
+
+        match object_store.get(&put_path).await {
+            Ok(result) => match result.bytes().await {
+                Ok(bytes) if bytes == payload => checks.push(capability_ok("get")),
+                Ok(bytes) => checks.push(capability_err(
+                    "get",
+                    format!(
+                        "payload mismatch: expected {} bytes, got {}",
+                        payload.len(),
+                        bytes.len()
+                    ),
+                )),
+                Err(error) => checks.push(capability_err("get", error)),
+            },
+            Err(error) => checks.push(capability_err("get", error)),
+        }
+
+        let mut listed = false;
+        let mut list_error = None;
+        let mut stream = object_store.list(Some(&probe_prefix));
+        while let Some(result) = stream.next().await {
+            match result {
+                Ok(meta) => {
+                    if meta.location == put_path {
+                        listed = true;
+                        break;
+                    }
+                }
+                Err(error) => {
+                    list_error = Some(error.to_string());
+                    break;
+                }
+            }
+        }
+        drop(stream);
+        if listed {
+            checks.push(capability_ok("list"));
+        } else {
+            checks.push(capability_err(
+                "list",
+                list_error.unwrap_or_else(|| "probe object was not listed".to_string()),
+            ));
+        }
+
+        let conditional_put_create_ok = match object_store
+            .put_opts(
+                &conditional_path,
+                payload.clone().into(),
+                PutMode::Create.into(),
+            )
+            .await
+        {
+            Ok(_) => {
+                checks.push(capability_ok("conditional_put_create"));
+                true
+            }
+            Err(error) => {
+                checks.push(capability_err("conditional_put_create", error));
+                false
+            }
+        };
+
+        if conditional_put_create_ok {
+            match object_store
+                .put_opts(
+                    &conditional_path,
+                    Bytes::from_static(b"conflict").into(),
+                    PutMode::Create.into(),
+                )
+                .await
+            {
+                Ok(_) => checks.push(capability_err(
+                    "conditional_put_conflict",
+                    "second create unexpectedly succeeded",
+                )),
+                Err(_) => checks.push(capability_ok("conditional_put_conflict")),
+            }
+        } else {
+            checks.push(capability_err(
+                "conditional_put_conflict",
+                "skipped because conditional_put_create failed",
+            ));
+        }
+
+        let copy_if_not_exists_ok =
+            match object_store.put(&copy_source, payload.clone().into()).await {
+                Ok(_) => match object_store
+                    .copy_if_not_exists(&copy_source, &copy_dest)
+                    .await
+                {
+                    Ok(_) => {
+                        checks.push(capability_ok("copy_if_not_exists"));
+                        true
+                    }
+                    Err(error) => {
+                        checks.push(capability_err("copy_if_not_exists", error));
+                        false
+                    }
+                },
+                Err(error) => {
+                    checks.push(capability_err(
+                        "copy_if_not_exists",
+                        format!("source put failed: {error}"),
+                    ));
+                    false
+                }
+            };
+
+        if copy_if_not_exists_ok {
+            match object_store
+                .put(&copy_conflict_dest, payload.clone().into())
+                .await
+            {
+                Ok(_) => match object_store
+                    .copy_if_not_exists(&copy_source, &copy_conflict_dest)
+                    .await
+                {
+                    Ok(_) => checks.push(capability_err(
+                        "copy_if_not_exists_conflict",
+                        "copy to existing destination unexpectedly succeeded",
+                    )),
+                    Err(_) => checks.push(capability_ok("copy_if_not_exists_conflict")),
+                },
+                Err(error) => checks.push(capability_err(
+                    "copy_if_not_exists_conflict",
+                    format!("destination put failed: {error}"),
+                )),
+            }
+        } else {
+            checks.push(capability_err(
+                "copy_if_not_exists_conflict",
+                "skipped because copy_if_not_exists failed",
+            ));
+        }
+
+        cleanup_probe_paths(&object_store, &cleanup_paths).await;
+
+        Ok(Response::new(StorageCapabilitiesResponse {
+            table_uri: req.table_uri,
+            checks,
         }))
     }
 

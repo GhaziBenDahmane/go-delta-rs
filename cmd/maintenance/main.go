@@ -6,6 +6,11 @@
 //	DELTA_AWS_ACCESS_KEY_ID
 //	DELTA_AWS_SECRET_ACCESS_KEY
 //	DELTA_AWS_S3_ENDPOINT_URL
+//	DELTA_S3_COMMIT_MODE            (optional: unsafe_rename, conditional_put:etag, copy_if_not_exists:multipart, or dynamo:<TABLE_NAME>)
+//	DELTA_AWS_CONDITIONAL_PUT        (optional: etag or dynamo:<TABLE_NAME>[:TIMEOUT_MILLIS])
+//	DELTA_AWS_COPY_IF_NOT_EXISTS     (optional: multipart, header:<KEY>:<VALUE>, header-with-status:<KEY>:<VALUE>:<STATUS>, or dynamo:<TABLE_NAME>)
+//	DELTA_AWS_CHECKSUM_ALGORITHM     (optional: sha256)
+//	DELTA_AWS_S3_ALLOW_UNSAFE_RENAME (optional: defaults true when conditional settings are absent)
 //	DELTA_S3_BUCKET
 //	DELTA_S3_PREFIX
 //	DELTA_SERVER_PATH   (optional — auto-downloaded if absent)
@@ -63,6 +68,14 @@ func main() {
 	prefix := requireEnv("DELTA_S3_PREFIX")
 
 	tableURI := fmt.Sprintf("s3://%s/%s", bucket, prefix)
+	commitMode := os.Getenv("DELTA_S3_COMMIT_MODE")
+	conditionalPut := os.Getenv("DELTA_AWS_CONDITIONAL_PUT")
+	copyIfNotExists := os.Getenv("DELTA_AWS_COPY_IF_NOT_EXISTS")
+	if commitMode != "" {
+		conditionalPut = ""
+		copyIfNotExists = ""
+	}
+	allowUnsafeRenameDefault := commitMode == "" && conditionalPut == "" && copyIfNotExists == ""
 
 	// ── Start sidecar ────────────────────────────────────────────────────────
 	// S3-compatible stores require a region in signing headers.
@@ -79,7 +92,11 @@ func main() {
 			S3AccessKeyID:       accessKey,
 			S3SecretAccessKey:   secretKey,
 			S3Region:            region,
-			S3AllowUnsafeRename: true,
+			S3AllowUnsafeRename: envBoolDefault("DELTA_AWS_S3_ALLOW_UNSAFE_RENAME", allowUnsafeRenameDefault),
+			S3CommitMode:        deltago.S3CommitMode(commitMode),
+			S3ConditionalPut:    conditionalPut,
+			S3CopyIfNotExists:   copyIfNotExists,
+			S3ChecksumAlgorithm: os.Getenv("DELTA_AWS_CHECKSUM_ALGORITHM"),
 		},
 		// AWS SDK v2026+ enables checksum validation by default. Some S3-compatible
 		// stores do not return x-amz-checksum-* headers. Force both to
@@ -231,4 +248,12 @@ func requireEnv(key string) string {
 		os.Exit(1)
 	}
 	return v
+}
+
+func envBoolDefault(key string, fallback bool) bool {
+	value := strings.TrimSpace(strings.ToLower(os.Getenv(key)))
+	if value == "" {
+		return fallback
+	}
+	return value == "1" || value == "true" || value == "yes" || value == "on"
 }

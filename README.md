@@ -254,6 +254,11 @@ func main() {
 
     // Vacuum
     c.Vacuum(ctx, "file:///tmp/users", 168, false)
+
+    // Delete rows with a Delta/DataFusion SQL predicate
+    c.Delete(ctx, "file:///tmp/users", &deltago.DeleteOptions{
+        Predicate: "score < 8.0",
+    })
 }
 ```
 
@@ -276,18 +281,52 @@ c.Write(ctx, "s3://my-bucket/events", deltago.WriteAppend, rows, schema)
 sidecar := deltago.NewSidecar(deltago.SidecarOptions{
     BinaryPath: "./delta-server",
     Storage: deltago.StorageConfig{
-        S3Endpoint:        "http://localhost:9000",  // MinIO
-        S3AccessKeyID:     "minioadmin",
-        S3SecretAccessKey: "minioadmin",
-        S3Region:          "us-east-1",
-        S3AllowHTTP:       true, // required when TLS is not configured
-        S3ForcePathStyle:  true, // required for MinIO and most self-hosted stores
+        S3Endpoint:          "http://localhost:9000", // MinIO
+        S3AccessKeyID:       "minioadmin",
+        S3SecretAccessKey:   "minioadmin",
+        S3Region:            "us-east-1",
+        S3AllowHTTP:         true, // required when TLS is not configured
+        S3ForcePathStyle:    true, // required for MinIO and most self-hosted stores
+        S3CommitMode:        deltago.S3CommitModeUnsafeRename,
     },
 })
 sidecar.Start(ctx)
 c := sidecar.Client()
 c.Write(ctx, "s3://my-bucket/events", deltago.WriteAppend, rows, schema)
 ```
+
+When the object store supports conditional operations, prefer those over unsafe
+rename:
+
+```go
+sidecar := deltago.NewSidecar(deltago.SidecarOptions{
+    Storage: deltago.StorageConfig{
+        S3Endpoint:         "https://s3-compatible.example.com",
+        S3AccessKeyID:      os.Getenv("AWS_ACCESS_KEY_ID"),
+        S3SecretAccessKey:  os.Getenv("AWS_SECRET_ACCESS_KEY"),
+        S3Region:           "us-east-1",
+        S3ForcePathStyle:   true,
+        S3CommitMode:       deltago.S3CommitModeConditionalPutETag,
+        S3ChecksumAlgorithm: "sha256",
+    },
+})
+```
+
+`S3CommitMode` is the consolidated knob for common modes:
+
+| Mode | Effect |
+|---|---|
+| `unsafe_rename` | delta-rs unsafe rename fallback |
+| `conditional_put:etag` or `etag` | object_store conditional put with ETag preconditions |
+| `copy_if_not_exists:multipart` or `multipart` | object_store multipart copy-if-not-exists |
+| `dynamo:<TABLE_NAME>[:TIMEOUT_MILLIS]` | DynamoDB-backed coordination for conditional operations |
+
+Advanced users can still set `S3AllowUnsafeRename`, `S3ConditionalPut`, or
+`S3CopyIfNotExists` directly. `S3CommitMode` cannot be combined with those
+lower-level fields.
+
+When running `delta-server` directly, the equivalent consolidated environment
+variable is `DELTA_S3_COMMIT_MODE`.
 
 ### Google Cloud Storage
 
@@ -317,6 +356,116 @@ import (
 conn, _ := grpc.NewClient("sidecar:50051",
     grpc.WithTransportCredentials(insecure.NewCredentials()))
 c := deltago.NewDeltaClient(deltapb.NewDeltaServiceClient(conn))
+```
+
+### First-write table creation
+
+Use `WriteOptions.CreateIfMissing` when the first write should create the Delta
+table and preserve partition metadata:
+
+```go
+result, err := c.WriteResult(ctx, "s3://my-bucket/events", deltago.WriteAppend, rows, schema, &deltago.WriteOptions{
+    BatchID:               "batch-2026-06-27",
+    AppTransactionID:      "batch-2026-06-27",
+    AppTransactionVersion: 1,
+    CreateIfMissing:      true,
+    PartitionColumns:     []string{"event_date"},
+})
+if err != nil {
+    var deltaErr *deltago.DeltaError
+    if errors.As(err, &deltaErr) && deltaErr.AmbiguousCommit {
+        // Reload application state and decide whether to retry.
+    }
+    return err
+}
+fmt.Println(result.Version, result.AlreadyCommitted)
+```
+
+Application transaction metadata is committed through delta-rs. If a commit
+returns an ambiguous storage error, the sidecar reloads the table and reports
+`AlreadyCommitted=true` when the application transaction is already present.
+
+### Storage capability probe
+
+`CheckStorageCapabilities` verifies the object-store operations needed by Delta
+log writes. It writes short probe objects below the table log path and cleans
+them up on a best-effort basis.
+
+```go
+caps, err := c.CheckStorageCapabilities(ctx, "s3://my-bucket/events")
+if err != nil {
+    return err
+}
+if !caps.Supported("conditional_put_create") {
+    // Configure S3ConditionalPut, S3CopyIfNotExists, Dynamo locking, or a safe fallback.
+}
+```
+
+Reported checks include `put`, `head`, `get`, `list`,
+`conditional_put_create`, `conditional_put_conflict`, `copy_if_not_exists`, and
+`copy_if_not_exists_conflict`.
+
+### Schema alignment helper
+
+For JSON rows assembled from dynamic sources, align them before writing so each
+row contains exactly the Delta schema columns:
+
+```go
+rows = deltago.AlignRowsToSchema(rows, schema)
+err := c.WriteWithOptions(ctx, tableURI, deltago.WriteAppend, rows, schema, &deltago.WriteOptions{
+    CreateIfMissing: true,
+})
+```
+
+Extra columns are dropped, missing columns are set to `nil`, and common scalar
+types are conservatively coerced before delta-rs performs final validation.
+
+### Sidecar output
+
+By default the sidecar inherits `os.Stdout` and `os.Stderr`. Tests and services
+can redirect output:
+
+```go
+sidecar := deltago.NewSidecar(deltago.SidecarOptions{
+    Stdout: io.Discard,
+    Stderr: io.Discard,
+})
+```
+
+### Runtime memory controls
+
+The sidecar keeps recently used `DeltaTable` snapshots in memory so repeated
+writes avoid a full table open. For long-running workers with tight memory
+limits, bound or disable that cache and enable allocator purging:
+
+```go
+sidecar := deltago.NewSidecar(deltago.SidecarOptions{
+    Runtime: deltago.RuntimeConfig{
+        Profile: deltago.RuntimeProfileLowRSS,
+    },
+})
+```
+
+The same behavior is available when running `delta-server` directly:
+
+```bash
+export DELTA_RUNTIME_PROFILE=low_rss
+export MALLOC_CONF=background_thread:true,dirty_decay_ms:5000,muzzy_decay_ms:5000
+```
+
+Use `RuntimeProfileMinimumMemory` / `DELTA_RUNTIME_PROFILE=minimum_memory` for
+the lowest RSS. Advanced users can still override `TableCacheMaxEntries`,
+`TableCacheTTL`, `MemoryPurgeInterval`, and allocator decay settings directly.
+
+The Go client can inspect and actively trim runtime memory:
+
+```go
+stats, _ := c.RuntimeStats(ctx)
+fmt.Println(stats.Memory.ResidentBytes, stats.TableCacheEntries)
+
+// Empty table URI clears all cached tables; true also asks jemalloc to purge.
+c.ClearTableCache(ctx, "", true)
+c.ReleaseMemory(ctx)
 ```
 
 ---
@@ -373,6 +522,7 @@ go-delta-rs/
 │       └── service.rs         # RPC handlers
 ├── deltago/                   # Go client package
 │   ├── doc.go
+│   ├── errors.go              # structured DeltaError parsing
 │   ├── sidecar.go             # Sidecar + StorageConfig
 │   ├── client.go              # DeltaClient API
 │   └── types.go               # Column, Row, WriteMode, …

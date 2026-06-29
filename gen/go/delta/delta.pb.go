@@ -299,8 +299,13 @@ type WriteRequest struct {
 	// treated as already committed.
 	AppTransactionId      string `protobuf:"bytes,6,opt,name=app_transaction_id,json=appTransactionId,proto3" json:"app_transaction_id,omitempty"`
 	AppTransactionVersion int64  `protobuf:"varint,7,opt,name=app_transaction_version,json=appTransactionVersion,proto3" json:"app_transaction_version,omitempty"`
-	unknownFields         protoimpl.UnknownFields
-	sizeCache             protoimpl.SizeCache
+	// Create the Delta table before writing when it does not exist. This is
+	// especially useful for first append writes that must preserve partition
+	// metadata.
+	CreateIfMissing  bool     `protobuf:"varint,8,opt,name=create_if_missing,json=createIfMissing,proto3" json:"create_if_missing,omitempty"`
+	PartitionColumns []string `protobuf:"bytes,9,rep,name=partition_columns,json=partitionColumns,proto3" json:"partition_columns,omitempty"`
+	unknownFields    protoimpl.UnknownFields
+	sizeCache        protoimpl.SizeCache
 }
 
 func (x *WriteRequest) Reset() {
@@ -382,6 +387,20 @@ func (x *WriteRequest) GetAppTransactionVersion() int64 {
 	return 0
 }
 
+func (x *WriteRequest) GetCreateIfMissing() bool {
+	if x != nil {
+		return x.CreateIfMissing
+	}
+	return false
+}
+
+func (x *WriteRequest) GetPartitionColumns() []string {
+	if x != nil {
+		return x.PartitionColumns
+	}
+	return nil
+}
+
 type WriteResponse struct {
 	state            protoimpl.MessageState `protogen:"open.v1"`
 	Version          int64                  `protobuf:"varint,1,opt,name=version,proto3" json:"version,omitempty"`
@@ -450,6 +469,168 @@ func (x *WriteResponse) GetBatchId() string {
 	return ""
 }
 
+type DeleteRequest struct {
+	state    protoimpl.MessageState `protogen:"open.v1"`
+	TableUri string                 `protobuf:"bytes,1,opt,name=table_uri,json=tableUri,proto3" json:"table_uri,omitempty"`
+	// SQL predicate parsed by delta-rs/DataFusion, e.g. "event_date < '2026-01-01'".
+	// Empty means full-table delete and requires allow_full_table_delete=true.
+	Predicate            string `protobuf:"bytes,2,opt,name=predicate,proto3" json:"predicate,omitempty"`
+	AllowFullTableDelete bool   `protobuf:"varint,3,opt,name=allow_full_table_delete,json=allowFullTableDelete,proto3" json:"allow_full_table_delete,omitempty"`
+	unknownFields        protoimpl.UnknownFields
+	sizeCache            protoimpl.SizeCache
+}
+
+func (x *DeleteRequest) Reset() {
+	*x = DeleteRequest{}
+	mi := &file_delta_proto_msgTypes[7]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *DeleteRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*DeleteRequest) ProtoMessage() {}
+
+func (x *DeleteRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_delta_proto_msgTypes[7]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use DeleteRequest.ProtoReflect.Descriptor instead.
+func (*DeleteRequest) Descriptor() ([]byte, []int) {
+	return file_delta_proto_rawDescGZIP(), []int{7}
+}
+
+func (x *DeleteRequest) GetTableUri() string {
+	if x != nil {
+		return x.TableUri
+	}
+	return ""
+}
+
+func (x *DeleteRequest) GetPredicate() string {
+	if x != nil {
+		return x.Predicate
+	}
+	return ""
+}
+
+func (x *DeleteRequest) GetAllowFullTableDelete() bool {
+	if x != nil {
+		return x.AllowFullTableDelete
+	}
+	return false
+}
+
+type DeleteResponse struct {
+	state           protoimpl.MessageState `protogen:"open.v1"`
+	Version         int64                  `protobuf:"varint,1,opt,name=version,proto3" json:"version,omitempty"`
+	FilesAdded      int64                  `protobuf:"varint,2,opt,name=files_added,json=filesAdded,proto3" json:"files_added,omitempty"`
+	FilesRemoved    int64                  `protobuf:"varint,3,opt,name=files_removed,json=filesRemoved,proto3" json:"files_removed,omitempty"`
+	RowsDeleted     int64                  `protobuf:"varint,4,opt,name=rows_deleted,json=rowsDeleted,proto3" json:"rows_deleted,omitempty"`
+	RowsCopied      int64                  `protobuf:"varint,5,opt,name=rows_copied,json=rowsCopied,proto3" json:"rows_copied,omitempty"`
+	ExecutionTimeMs int64                  `protobuf:"varint,6,opt,name=execution_time_ms,json=executionTimeMs,proto3" json:"execution_time_ms,omitempty"`
+	ScanTimeMs      int64                  `protobuf:"varint,7,opt,name=scan_time_ms,json=scanTimeMs,proto3" json:"scan_time_ms,omitempty"`
+	RewriteTimeMs   int64                  `protobuf:"varint,8,opt,name=rewrite_time_ms,json=rewriteTimeMs,proto3" json:"rewrite_time_ms,omitempty"`
+	unknownFields   protoimpl.UnknownFields
+	sizeCache       protoimpl.SizeCache
+}
+
+func (x *DeleteResponse) Reset() {
+	*x = DeleteResponse{}
+	mi := &file_delta_proto_msgTypes[8]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *DeleteResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*DeleteResponse) ProtoMessage() {}
+
+func (x *DeleteResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_delta_proto_msgTypes[8]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use DeleteResponse.ProtoReflect.Descriptor instead.
+func (*DeleteResponse) Descriptor() ([]byte, []int) {
+	return file_delta_proto_rawDescGZIP(), []int{8}
+}
+
+func (x *DeleteResponse) GetVersion() int64 {
+	if x != nil {
+		return x.Version
+	}
+	return 0
+}
+
+func (x *DeleteResponse) GetFilesAdded() int64 {
+	if x != nil {
+		return x.FilesAdded
+	}
+	return 0
+}
+
+func (x *DeleteResponse) GetFilesRemoved() int64 {
+	if x != nil {
+		return x.FilesRemoved
+	}
+	return 0
+}
+
+func (x *DeleteResponse) GetRowsDeleted() int64 {
+	if x != nil {
+		return x.RowsDeleted
+	}
+	return 0
+}
+
+func (x *DeleteResponse) GetRowsCopied() int64 {
+	if x != nil {
+		return x.RowsCopied
+	}
+	return 0
+}
+
+func (x *DeleteResponse) GetExecutionTimeMs() int64 {
+	if x != nil {
+		return x.ExecutionTimeMs
+	}
+	return 0
+}
+
+func (x *DeleteResponse) GetScanTimeMs() int64 {
+	if x != nil {
+		return x.ScanTimeMs
+	}
+	return 0
+}
+
+func (x *DeleteResponse) GetRewriteTimeMs() int64 {
+	if x != nil {
+		return x.RewriteTimeMs
+	}
+	return 0
+}
+
 type ReadRequest struct {
 	state    protoimpl.MessageState `protogen:"open.v1"`
 	TableUri string                 `protobuf:"bytes,1,opt,name=table_uri,json=tableUri,proto3" json:"table_uri,omitempty"`
@@ -465,7 +646,7 @@ type ReadRequest struct {
 
 func (x *ReadRequest) Reset() {
 	*x = ReadRequest{}
-	mi := &file_delta_proto_msgTypes[7]
+	mi := &file_delta_proto_msgTypes[9]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -477,7 +658,7 @@ func (x *ReadRequest) String() string {
 func (*ReadRequest) ProtoMessage() {}
 
 func (x *ReadRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_delta_proto_msgTypes[7]
+	mi := &file_delta_proto_msgTypes[9]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -490,7 +671,7 @@ func (x *ReadRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ReadRequest.ProtoReflect.Descriptor instead.
 func (*ReadRequest) Descriptor() ([]byte, []int) {
-	return file_delta_proto_rawDescGZIP(), []int{7}
+	return file_delta_proto_rawDescGZIP(), []int{9}
 }
 
 func (x *ReadRequest) GetTableUri() string {
@@ -532,7 +713,7 @@ type ReadResponse struct {
 
 func (x *ReadResponse) Reset() {
 	*x = ReadResponse{}
-	mi := &file_delta_proto_msgTypes[8]
+	mi := &file_delta_proto_msgTypes[10]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -544,7 +725,7 @@ func (x *ReadResponse) String() string {
 func (*ReadResponse) ProtoMessage() {}
 
 func (x *ReadResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_delta_proto_msgTypes[8]
+	mi := &file_delta_proto_msgTypes[10]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -557,7 +738,7 @@ func (x *ReadResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ReadResponse.ProtoReflect.Descriptor instead.
 func (*ReadResponse) Descriptor() ([]byte, []int) {
-	return file_delta_proto_rawDescGZIP(), []int{8}
+	return file_delta_proto_rawDescGZIP(), []int{10}
 }
 
 func (x *ReadResponse) GetJsonData() string {
@@ -583,7 +764,7 @@ type GetTableInfoRequest struct {
 
 func (x *GetTableInfoRequest) Reset() {
 	*x = GetTableInfoRequest{}
-	mi := &file_delta_proto_msgTypes[9]
+	mi := &file_delta_proto_msgTypes[11]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -595,7 +776,7 @@ func (x *GetTableInfoRequest) String() string {
 func (*GetTableInfoRequest) ProtoMessage() {}
 
 func (x *GetTableInfoRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_delta_proto_msgTypes[9]
+	mi := &file_delta_proto_msgTypes[11]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -608,7 +789,7 @@ func (x *GetTableInfoRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetTableInfoRequest.ProtoReflect.Descriptor instead.
 func (*GetTableInfoRequest) Descriptor() ([]byte, []int) {
-	return file_delta_proto_rawDescGZIP(), []int{9}
+	return file_delta_proto_rawDescGZIP(), []int{11}
 }
 
 func (x *GetTableInfoRequest) GetTableUri() string {
@@ -631,7 +812,7 @@ type GetTableInfoResponse struct {
 
 func (x *GetTableInfoResponse) Reset() {
 	*x = GetTableInfoResponse{}
-	mi := &file_delta_proto_msgTypes[10]
+	mi := &file_delta_proto_msgTypes[12]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -643,7 +824,7 @@ func (x *GetTableInfoResponse) String() string {
 func (*GetTableInfoResponse) ProtoMessage() {}
 
 func (x *GetTableInfoResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_delta_proto_msgTypes[10]
+	mi := &file_delta_proto_msgTypes[12]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -656,7 +837,7 @@ func (x *GetTableInfoResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetTableInfoResponse.ProtoReflect.Descriptor instead.
 func (*GetTableInfoResponse) Descriptor() ([]byte, []int) {
-	return file_delta_proto_rawDescGZIP(), []int{10}
+	return file_delta_proto_rawDescGZIP(), []int{12}
 }
 
 func (x *GetTableInfoResponse) GetVersion() int64 {
@@ -705,7 +886,7 @@ type HistoryRequest struct {
 
 func (x *HistoryRequest) Reset() {
 	*x = HistoryRequest{}
-	mi := &file_delta_proto_msgTypes[11]
+	mi := &file_delta_proto_msgTypes[13]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -717,7 +898,7 @@ func (x *HistoryRequest) String() string {
 func (*HistoryRequest) ProtoMessage() {}
 
 func (x *HistoryRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_delta_proto_msgTypes[11]
+	mi := &file_delta_proto_msgTypes[13]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -730,7 +911,7 @@ func (x *HistoryRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use HistoryRequest.ProtoReflect.Descriptor instead.
 func (*HistoryRequest) Descriptor() ([]byte, []int) {
-	return file_delta_proto_rawDescGZIP(), []int{11}
+	return file_delta_proto_rawDescGZIP(), []int{13}
 }
 
 func (x *HistoryRequest) GetTableUri() string {
@@ -759,7 +940,7 @@ type CommitInfo struct {
 
 func (x *CommitInfo) Reset() {
 	*x = CommitInfo{}
-	mi := &file_delta_proto_msgTypes[12]
+	mi := &file_delta_proto_msgTypes[14]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -771,7 +952,7 @@ func (x *CommitInfo) String() string {
 func (*CommitInfo) ProtoMessage() {}
 
 func (x *CommitInfo) ProtoReflect() protoreflect.Message {
-	mi := &file_delta_proto_msgTypes[12]
+	mi := &file_delta_proto_msgTypes[14]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -784,7 +965,7 @@ func (x *CommitInfo) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CommitInfo.ProtoReflect.Descriptor instead.
 func (*CommitInfo) Descriptor() ([]byte, []int) {
-	return file_delta_proto_rawDescGZIP(), []int{12}
+	return file_delta_proto_rawDescGZIP(), []int{14}
 }
 
 func (x *CommitInfo) GetVersion() int64 {
@@ -824,7 +1005,7 @@ type HistoryResponse struct {
 
 func (x *HistoryResponse) Reset() {
 	*x = HistoryResponse{}
-	mi := &file_delta_proto_msgTypes[13]
+	mi := &file_delta_proto_msgTypes[15]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -836,7 +1017,7 @@ func (x *HistoryResponse) String() string {
 func (*HistoryResponse) ProtoMessage() {}
 
 func (x *HistoryResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_delta_proto_msgTypes[13]
+	mi := &file_delta_proto_msgTypes[15]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -849,7 +1030,7 @@ func (x *HistoryResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use HistoryResponse.ProtoReflect.Descriptor instead.
 func (*HistoryResponse) Descriptor() ([]byte, []int) {
-	return file_delta_proto_rawDescGZIP(), []int{13}
+	return file_delta_proto_rawDescGZIP(), []int{15}
 }
 
 func (x *HistoryResponse) GetCommits() []*CommitInfo {
@@ -878,7 +1059,7 @@ type OptimizeRequest struct {
 
 func (x *OptimizeRequest) Reset() {
 	*x = OptimizeRequest{}
-	mi := &file_delta_proto_msgTypes[14]
+	mi := &file_delta_proto_msgTypes[16]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -890,7 +1071,7 @@ func (x *OptimizeRequest) String() string {
 func (*OptimizeRequest) ProtoMessage() {}
 
 func (x *OptimizeRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_delta_proto_msgTypes[14]
+	mi := &file_delta_proto_msgTypes[16]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -903,7 +1084,7 @@ func (x *OptimizeRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use OptimizeRequest.ProtoReflect.Descriptor instead.
 func (*OptimizeRequest) Descriptor() ([]byte, []int) {
-	return file_delta_proto_rawDescGZIP(), []int{14}
+	return file_delta_proto_rawDescGZIP(), []int{16}
 }
 
 func (x *OptimizeRequest) GetTableUri() string {
@@ -945,7 +1126,7 @@ type OptimizeResponse struct {
 
 func (x *OptimizeResponse) Reset() {
 	*x = OptimizeResponse{}
-	mi := &file_delta_proto_msgTypes[15]
+	mi := &file_delta_proto_msgTypes[17]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -957,7 +1138,7 @@ func (x *OptimizeResponse) String() string {
 func (*OptimizeResponse) ProtoMessage() {}
 
 func (x *OptimizeResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_delta_proto_msgTypes[15]
+	mi := &file_delta_proto_msgTypes[17]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -970,7 +1151,7 @@ func (x *OptimizeResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use OptimizeResponse.ProtoReflect.Descriptor instead.
 func (*OptimizeResponse) Descriptor() ([]byte, []int) {
-	return file_delta_proto_rawDescGZIP(), []int{15}
+	return file_delta_proto_rawDescGZIP(), []int{17}
 }
 
 func (x *OptimizeResponse) GetFilesAdded() int64 {
@@ -1010,7 +1191,7 @@ type RewriteCheckpointMultipartRequest struct {
 
 func (x *RewriteCheckpointMultipartRequest) Reset() {
 	*x = RewriteCheckpointMultipartRequest{}
-	mi := &file_delta_proto_msgTypes[16]
+	mi := &file_delta_proto_msgTypes[18]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1022,7 +1203,7 @@ func (x *RewriteCheckpointMultipartRequest) String() string {
 func (*RewriteCheckpointMultipartRequest) ProtoMessage() {}
 
 func (x *RewriteCheckpointMultipartRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_delta_proto_msgTypes[16]
+	mi := &file_delta_proto_msgTypes[18]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1035,7 +1216,7 @@ func (x *RewriteCheckpointMultipartRequest) ProtoReflect() protoreflect.Message 
 
 // Deprecated: Use RewriteCheckpointMultipartRequest.ProtoReflect.Descriptor instead.
 func (*RewriteCheckpointMultipartRequest) Descriptor() ([]byte, []int) {
-	return file_delta_proto_rawDescGZIP(), []int{16}
+	return file_delta_proto_rawDescGZIP(), []int{18}
 }
 
 func (x *RewriteCheckpointMultipartRequest) GetTableUri() string {
@@ -1085,7 +1266,7 @@ type RewriteCheckpointMultipartResponse struct {
 
 func (x *RewriteCheckpointMultipartResponse) Reset() {
 	*x = RewriteCheckpointMultipartResponse{}
-	mi := &file_delta_proto_msgTypes[17]
+	mi := &file_delta_proto_msgTypes[19]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1097,7 +1278,7 @@ func (x *RewriteCheckpointMultipartResponse) String() string {
 func (*RewriteCheckpointMultipartResponse) ProtoMessage() {}
 
 func (x *RewriteCheckpointMultipartResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_delta_proto_msgTypes[17]
+	mi := &file_delta_proto_msgTypes[19]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1110,7 +1291,7 @@ func (x *RewriteCheckpointMultipartResponse) ProtoReflect() protoreflect.Message
 
 // Deprecated: Use RewriteCheckpointMultipartResponse.ProtoReflect.Descriptor instead.
 func (*RewriteCheckpointMultipartResponse) Descriptor() ([]byte, []int) {
-	return file_delta_proto_rawDescGZIP(), []int{17}
+	return file_delta_proto_rawDescGZIP(), []int{19}
 }
 
 func (x *RewriteCheckpointMultipartResponse) GetVersion() int64 {
@@ -1190,6 +1371,551 @@ func (x *RewriteCheckpointMultipartResponse) GetMessage() string {
 	return ""
 }
 
+type StorageCapabilitiesRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	TableUri      string                 `protobuf:"bytes,1,opt,name=table_uri,json=tableUri,proto3" json:"table_uri,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *StorageCapabilitiesRequest) Reset() {
+	*x = StorageCapabilitiesRequest{}
+	mi := &file_delta_proto_msgTypes[20]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *StorageCapabilitiesRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*StorageCapabilitiesRequest) ProtoMessage() {}
+
+func (x *StorageCapabilitiesRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_delta_proto_msgTypes[20]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use StorageCapabilitiesRequest.ProtoReflect.Descriptor instead.
+func (*StorageCapabilitiesRequest) Descriptor() ([]byte, []int) {
+	return file_delta_proto_rawDescGZIP(), []int{20}
+}
+
+func (x *StorageCapabilitiesRequest) GetTableUri() string {
+	if x != nil {
+		return x.TableUri
+	}
+	return ""
+}
+
+type CapabilityCheck struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Name          string                 `protobuf:"bytes,1,opt,name=name,proto3" json:"name,omitempty"`
+	Supported     bool                   `protobuf:"varint,2,opt,name=supported,proto3" json:"supported,omitempty"`
+	Error         string                 `protobuf:"bytes,3,opt,name=error,proto3" json:"error,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *CapabilityCheck) Reset() {
+	*x = CapabilityCheck{}
+	mi := &file_delta_proto_msgTypes[21]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *CapabilityCheck) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*CapabilityCheck) ProtoMessage() {}
+
+func (x *CapabilityCheck) ProtoReflect() protoreflect.Message {
+	mi := &file_delta_proto_msgTypes[21]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use CapabilityCheck.ProtoReflect.Descriptor instead.
+func (*CapabilityCheck) Descriptor() ([]byte, []int) {
+	return file_delta_proto_rawDescGZIP(), []int{21}
+}
+
+func (x *CapabilityCheck) GetName() string {
+	if x != nil {
+		return x.Name
+	}
+	return ""
+}
+
+func (x *CapabilityCheck) GetSupported() bool {
+	if x != nil {
+		return x.Supported
+	}
+	return false
+}
+
+func (x *CapabilityCheck) GetError() string {
+	if x != nil {
+		return x.Error
+	}
+	return ""
+}
+
+type StorageCapabilitiesResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	TableUri      string                 `protobuf:"bytes,1,opt,name=table_uri,json=tableUri,proto3" json:"table_uri,omitempty"`
+	Checks        []*CapabilityCheck     `protobuf:"bytes,2,rep,name=checks,proto3" json:"checks,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *StorageCapabilitiesResponse) Reset() {
+	*x = StorageCapabilitiesResponse{}
+	mi := &file_delta_proto_msgTypes[22]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *StorageCapabilitiesResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*StorageCapabilitiesResponse) ProtoMessage() {}
+
+func (x *StorageCapabilitiesResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_delta_proto_msgTypes[22]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use StorageCapabilitiesResponse.ProtoReflect.Descriptor instead.
+func (*StorageCapabilitiesResponse) Descriptor() ([]byte, []int) {
+	return file_delta_proto_rawDescGZIP(), []int{22}
+}
+
+func (x *StorageCapabilitiesResponse) GetTableUri() string {
+	if x != nil {
+		return x.TableUri
+	}
+	return ""
+}
+
+func (x *StorageCapabilitiesResponse) GetChecks() []*CapabilityCheck {
+	if x != nil {
+		return x.Checks
+	}
+	return nil
+}
+
+type MemoryStats struct {
+	state          protoimpl.MessageState `protogen:"open.v1"`
+	AllocatedBytes uint64                 `protobuf:"varint,1,opt,name=allocated_bytes,json=allocatedBytes,proto3" json:"allocated_bytes,omitempty"`
+	ActiveBytes    uint64                 `protobuf:"varint,2,opt,name=active_bytes,json=activeBytes,proto3" json:"active_bytes,omitempty"`
+	ResidentBytes  uint64                 `protobuf:"varint,3,opt,name=resident_bytes,json=residentBytes,proto3" json:"resident_bytes,omitempty"`
+	MappedBytes    uint64                 `protobuf:"varint,4,opt,name=mapped_bytes,json=mappedBytes,proto3" json:"mapped_bytes,omitempty"`
+	RetainedBytes  uint64                 `protobuf:"varint,5,opt,name=retained_bytes,json=retainedBytes,proto3" json:"retained_bytes,omitempty"`
+	unknownFields  protoimpl.UnknownFields
+	sizeCache      protoimpl.SizeCache
+}
+
+func (x *MemoryStats) Reset() {
+	*x = MemoryStats{}
+	mi := &file_delta_proto_msgTypes[23]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *MemoryStats) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*MemoryStats) ProtoMessage() {}
+
+func (x *MemoryStats) ProtoReflect() protoreflect.Message {
+	mi := &file_delta_proto_msgTypes[23]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use MemoryStats.ProtoReflect.Descriptor instead.
+func (*MemoryStats) Descriptor() ([]byte, []int) {
+	return file_delta_proto_rawDescGZIP(), []int{23}
+}
+
+func (x *MemoryStats) GetAllocatedBytes() uint64 {
+	if x != nil {
+		return x.AllocatedBytes
+	}
+	return 0
+}
+
+func (x *MemoryStats) GetActiveBytes() uint64 {
+	if x != nil {
+		return x.ActiveBytes
+	}
+	return 0
+}
+
+func (x *MemoryStats) GetResidentBytes() uint64 {
+	if x != nil {
+		return x.ResidentBytes
+	}
+	return 0
+}
+
+func (x *MemoryStats) GetMappedBytes() uint64 {
+	if x != nil {
+		return x.MappedBytes
+	}
+	return 0
+}
+
+func (x *MemoryStats) GetRetainedBytes() uint64 {
+	if x != nil {
+		return x.RetainedBytes
+	}
+	return 0
+}
+
+type RuntimeStatsRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *RuntimeStatsRequest) Reset() {
+	*x = RuntimeStatsRequest{}
+	mi := &file_delta_proto_msgTypes[24]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *RuntimeStatsRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*RuntimeStatsRequest) ProtoMessage() {}
+
+func (x *RuntimeStatsRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_delta_proto_msgTypes[24]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use RuntimeStatsRequest.ProtoReflect.Descriptor instead.
+func (*RuntimeStatsRequest) Descriptor() ([]byte, []int) {
+	return file_delta_proto_rawDescGZIP(), []int{24}
+}
+
+type RuntimeStatsResponse struct {
+	state                protoimpl.MessageState `protogen:"open.v1"`
+	Memory               *MemoryStats           `protobuf:"bytes,1,opt,name=memory,proto3" json:"memory,omitempty"`
+	TableCacheEntries    int64                  `protobuf:"varint,2,opt,name=table_cache_entries,json=tableCacheEntries,proto3" json:"table_cache_entries,omitempty"`
+	TableCacheMaxEntries int64                  `protobuf:"varint,3,opt,name=table_cache_max_entries,json=tableCacheMaxEntries,proto3" json:"table_cache_max_entries,omitempty"`
+	TableCacheTtlSeconds int64                  `protobuf:"varint,4,opt,name=table_cache_ttl_seconds,json=tableCacheTtlSeconds,proto3" json:"table_cache_ttl_seconds,omitempty"`
+	unknownFields        protoimpl.UnknownFields
+	sizeCache            protoimpl.SizeCache
+}
+
+func (x *RuntimeStatsResponse) Reset() {
+	*x = RuntimeStatsResponse{}
+	mi := &file_delta_proto_msgTypes[25]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *RuntimeStatsResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*RuntimeStatsResponse) ProtoMessage() {}
+
+func (x *RuntimeStatsResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_delta_proto_msgTypes[25]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use RuntimeStatsResponse.ProtoReflect.Descriptor instead.
+func (*RuntimeStatsResponse) Descriptor() ([]byte, []int) {
+	return file_delta_proto_rawDescGZIP(), []int{25}
+}
+
+func (x *RuntimeStatsResponse) GetMemory() *MemoryStats {
+	if x != nil {
+		return x.Memory
+	}
+	return nil
+}
+
+func (x *RuntimeStatsResponse) GetTableCacheEntries() int64 {
+	if x != nil {
+		return x.TableCacheEntries
+	}
+	return 0
+}
+
+func (x *RuntimeStatsResponse) GetTableCacheMaxEntries() int64 {
+	if x != nil {
+		return x.TableCacheMaxEntries
+	}
+	return 0
+}
+
+func (x *RuntimeStatsResponse) GetTableCacheTtlSeconds() int64 {
+	if x != nil {
+		return x.TableCacheTtlSeconds
+	}
+	return 0
+}
+
+type ClearTableCacheRequest struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// Empty clears every cached table.
+	TableUri      string `protobuf:"bytes,1,opt,name=table_uri,json=tableUri,proto3" json:"table_uri,omitempty"`
+	ReleaseMemory bool   `protobuf:"varint,2,opt,name=release_memory,json=releaseMemory,proto3" json:"release_memory,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ClearTableCacheRequest) Reset() {
+	*x = ClearTableCacheRequest{}
+	mi := &file_delta_proto_msgTypes[26]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ClearTableCacheRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ClearTableCacheRequest) ProtoMessage() {}
+
+func (x *ClearTableCacheRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_delta_proto_msgTypes[26]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ClearTableCacheRequest.ProtoReflect.Descriptor instead.
+func (*ClearTableCacheRequest) Descriptor() ([]byte, []int) {
+	return file_delta_proto_rawDescGZIP(), []int{26}
+}
+
+func (x *ClearTableCacheRequest) GetTableUri() string {
+	if x != nil {
+		return x.TableUri
+	}
+	return ""
+}
+
+func (x *ClearTableCacheRequest) GetReleaseMemory() bool {
+	if x != nil {
+		return x.ReleaseMemory
+	}
+	return false
+}
+
+type ClearTableCacheResponse struct {
+	state             protoimpl.MessageState `protogen:"open.v1"`
+	TablesRemoved     int64                  `protobuf:"varint,1,opt,name=tables_removed,json=tablesRemoved,proto3" json:"tables_removed,omitempty"`
+	TableCacheEntries int64                  `protobuf:"varint,2,opt,name=table_cache_entries,json=tableCacheEntries,proto3" json:"table_cache_entries,omitempty"`
+	MemoryBefore      *MemoryStats           `protobuf:"bytes,3,opt,name=memory_before,json=memoryBefore,proto3" json:"memory_before,omitempty"`
+	MemoryAfter       *MemoryStats           `protobuf:"bytes,4,opt,name=memory_after,json=memoryAfter,proto3" json:"memory_after,omitempty"`
+	unknownFields     protoimpl.UnknownFields
+	sizeCache         protoimpl.SizeCache
+}
+
+func (x *ClearTableCacheResponse) Reset() {
+	*x = ClearTableCacheResponse{}
+	mi := &file_delta_proto_msgTypes[27]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ClearTableCacheResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ClearTableCacheResponse) ProtoMessage() {}
+
+func (x *ClearTableCacheResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_delta_proto_msgTypes[27]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ClearTableCacheResponse.ProtoReflect.Descriptor instead.
+func (*ClearTableCacheResponse) Descriptor() ([]byte, []int) {
+	return file_delta_proto_rawDescGZIP(), []int{27}
+}
+
+func (x *ClearTableCacheResponse) GetTablesRemoved() int64 {
+	if x != nil {
+		return x.TablesRemoved
+	}
+	return 0
+}
+
+func (x *ClearTableCacheResponse) GetTableCacheEntries() int64 {
+	if x != nil {
+		return x.TableCacheEntries
+	}
+	return 0
+}
+
+func (x *ClearTableCacheResponse) GetMemoryBefore() *MemoryStats {
+	if x != nil {
+		return x.MemoryBefore
+	}
+	return nil
+}
+
+func (x *ClearTableCacheResponse) GetMemoryAfter() *MemoryStats {
+	if x != nil {
+		return x.MemoryAfter
+	}
+	return nil
+}
+
+type ReleaseMemoryRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ReleaseMemoryRequest) Reset() {
+	*x = ReleaseMemoryRequest{}
+	mi := &file_delta_proto_msgTypes[28]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ReleaseMemoryRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ReleaseMemoryRequest) ProtoMessage() {}
+
+func (x *ReleaseMemoryRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_delta_proto_msgTypes[28]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ReleaseMemoryRequest.ProtoReflect.Descriptor instead.
+func (*ReleaseMemoryRequest) Descriptor() ([]byte, []int) {
+	return file_delta_proto_rawDescGZIP(), []int{28}
+}
+
+type ReleaseMemoryResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	MemoryBefore  *MemoryStats           `protobuf:"bytes,1,opt,name=memory_before,json=memoryBefore,proto3" json:"memory_before,omitempty"`
+	MemoryAfter   *MemoryStats           `protobuf:"bytes,2,opt,name=memory_after,json=memoryAfter,proto3" json:"memory_after,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ReleaseMemoryResponse) Reset() {
+	*x = ReleaseMemoryResponse{}
+	mi := &file_delta_proto_msgTypes[29]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ReleaseMemoryResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ReleaseMemoryResponse) ProtoMessage() {}
+
+func (x *ReleaseMemoryResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_delta_proto_msgTypes[29]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ReleaseMemoryResponse.ProtoReflect.Descriptor instead.
+func (*ReleaseMemoryResponse) Descriptor() ([]byte, []int) {
+	return file_delta_proto_rawDescGZIP(), []int{29}
+}
+
+func (x *ReleaseMemoryResponse) GetMemoryBefore() *MemoryStats {
+	if x != nil {
+		return x.MemoryBefore
+	}
+	return nil
+}
+
+func (x *ReleaseMemoryResponse) GetMemoryAfter() *MemoryStats {
+	if x != nil {
+		return x.MemoryAfter
+	}
+	return nil
+}
+
 type VacuumRequest struct {
 	state    protoimpl.MessageState `protogen:"open.v1"`
 	TableUri string                 `protobuf:"bytes,1,opt,name=table_uri,json=tableUri,proto3" json:"table_uri,omitempty"`
@@ -1202,7 +1928,7 @@ type VacuumRequest struct {
 
 func (x *VacuumRequest) Reset() {
 	*x = VacuumRequest{}
-	mi := &file_delta_proto_msgTypes[18]
+	mi := &file_delta_proto_msgTypes[30]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1214,7 +1940,7 @@ func (x *VacuumRequest) String() string {
 func (*VacuumRequest) ProtoMessage() {}
 
 func (x *VacuumRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_delta_proto_msgTypes[18]
+	mi := &file_delta_proto_msgTypes[30]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1227,7 +1953,7 @@ func (x *VacuumRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use VacuumRequest.ProtoReflect.Descriptor instead.
 func (*VacuumRequest) Descriptor() ([]byte, []int) {
-	return file_delta_proto_rawDescGZIP(), []int{18}
+	return file_delta_proto_rawDescGZIP(), []int{30}
 }
 
 func (x *VacuumRequest) GetTableUri() string {
@@ -1261,7 +1987,7 @@ type VacuumResponse struct {
 
 func (x *VacuumResponse) Reset() {
 	*x = VacuumResponse{}
-	mi := &file_delta_proto_msgTypes[19]
+	mi := &file_delta_proto_msgTypes[31]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1273,7 +1999,7 @@ func (x *VacuumResponse) String() string {
 func (*VacuumResponse) ProtoMessage() {}
 
 func (x *VacuumResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_delta_proto_msgTypes[19]
+	mi := &file_delta_proto_msgTypes[31]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1286,7 +2012,7 @@ func (x *VacuumResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use VacuumResponse.ProtoReflect.Descriptor instead.
 func (*VacuumResponse) Descriptor() ([]byte, []int) {
-	return file_delta_proto_rawDescGZIP(), []int{19}
+	return file_delta_proto_rawDescGZIP(), []int{31}
 }
 
 func (x *VacuumResponse) GetDeletedFiles() []string {
@@ -1322,7 +2048,7 @@ const file_delta_proto_rawDesc = "" +
 	"\x11partition_columns\x18\x03 \x03(\tR\x10partitionColumns\"I\n" +
 	"\x13CreateTableResponse\x12\x18\n" +
 	"\acreated\x18\x01 \x01(\bR\acreated\x12\x18\n" +
-	"\amessage\x18\x02 \x01(\tR\amessage\"\x87\x02\n" +
+	"\amessage\x18\x02 \x01(\tR\amessage\"\xe0\x02\n" +
 	"\fWriteRequest\x12\x1b\n" +
 	"\ttable_uri\x18\x01 \x01(\tR\btableUri\x12\x12\n" +
 	"\x04mode\x18\x02 \x01(\tR\x04mode\x12\x1b\n" +
@@ -1330,12 +2056,30 @@ const file_delta_proto_rawDesc = "" +
 	"\x06schema\x18\x04 \x03(\v2\x10.delta.ColumnDefR\x06schema\x12\x19\n" +
 	"\bbatch_id\x18\x05 \x01(\tR\abatchId\x12,\n" +
 	"\x12app_transaction_id\x18\x06 \x01(\tR\x10appTransactionId\x126\n" +
-	"\x17app_transaction_version\x18\a \x01(\x03R\x15appTransactionVersion\"\x94\x01\n" +
+	"\x17app_transaction_version\x18\a \x01(\x03R\x15appTransactionVersion\x12*\n" +
+	"\x11create_if_missing\x18\b \x01(\bR\x0fcreateIfMissing\x12+\n" +
+	"\x11partition_columns\x18\t \x03(\tR\x10partitionColumns\"\x94\x01\n" +
 	"\rWriteResponse\x12\x18\n" +
 	"\aversion\x18\x01 \x01(\x03R\aversion\x12!\n" +
 	"\frows_written\x18\x02 \x01(\x03R\vrowsWritten\x12+\n" +
 	"\x11already_committed\x18\x03 \x01(\bR\x10alreadyCommitted\x12\x19\n" +
-	"\bbatch_id\x18\x04 \x01(\tR\abatchId\"r\n" +
+	"\bbatch_id\x18\x04 \x01(\tR\abatchId\"\x81\x01\n" +
+	"\rDeleteRequest\x12\x1b\n" +
+	"\ttable_uri\x18\x01 \x01(\tR\btableUri\x12\x1c\n" +
+	"\tpredicate\x18\x02 \x01(\tR\tpredicate\x125\n" +
+	"\x17allow_full_table_delete\x18\x03 \x01(\bR\x14allowFullTableDelete\"\xaa\x02\n" +
+	"\x0eDeleteResponse\x12\x18\n" +
+	"\aversion\x18\x01 \x01(\x03R\aversion\x12\x1f\n" +
+	"\vfiles_added\x18\x02 \x01(\x03R\n" +
+	"filesAdded\x12#\n" +
+	"\rfiles_removed\x18\x03 \x01(\x03R\ffilesRemoved\x12!\n" +
+	"\frows_deleted\x18\x04 \x01(\x03R\vrowsDeleted\x12\x1f\n" +
+	"\vrows_copied\x18\x05 \x01(\x03R\n" +
+	"rowsCopied\x12*\n" +
+	"\x11execution_time_ms\x18\x06 \x01(\x03R\x0fexecutionTimeMs\x12 \n" +
+	"\fscan_time_ms\x18\a \x01(\x03R\n" +
+	"scanTimeMs\x12&\n" +
+	"\x0frewrite_time_ms\x18\b \x01(\x03R\rrewriteTimeMs\"r\n" +
 	"\vReadRequest\x12\x1b\n" +
 	"\ttable_uri\x18\x01 \x01(\tR\btableUri\x12\x18\n" +
 	"\aversion\x18\x02 \x01(\tR\aversion\x12\x16\n" +
@@ -1390,7 +2134,40 @@ const file_delta_proto_rawDesc = "" +
 	"\rbackup_prefix\x18\t \x01(\tR\fbackupPrefix\x12)\n" +
 	"\x10checkpoint_files\x18\n" +
 	" \x03(\tR\x0fcheckpointFiles\x12\x18\n" +
-	"\amessage\x18\v \x01(\tR\amessage\"n\n" +
+	"\amessage\x18\v \x01(\tR\amessage\"9\n" +
+	"\x1aStorageCapabilitiesRequest\x12\x1b\n" +
+	"\ttable_uri\x18\x01 \x01(\tR\btableUri\"Y\n" +
+	"\x0fCapabilityCheck\x12\x12\n" +
+	"\x04name\x18\x01 \x01(\tR\x04name\x12\x1c\n" +
+	"\tsupported\x18\x02 \x01(\bR\tsupported\x12\x14\n" +
+	"\x05error\x18\x03 \x01(\tR\x05error\"j\n" +
+	"\x1bStorageCapabilitiesResponse\x12\x1b\n" +
+	"\ttable_uri\x18\x01 \x01(\tR\btableUri\x12.\n" +
+	"\x06checks\x18\x02 \x03(\v2\x16.delta.CapabilityCheckR\x06checks\"\xca\x01\n" +
+	"\vMemoryStats\x12'\n" +
+	"\x0fallocated_bytes\x18\x01 \x01(\x04R\x0eallocatedBytes\x12!\n" +
+	"\factive_bytes\x18\x02 \x01(\x04R\vactiveBytes\x12%\n" +
+	"\x0eresident_bytes\x18\x03 \x01(\x04R\rresidentBytes\x12!\n" +
+	"\fmapped_bytes\x18\x04 \x01(\x04R\vmappedBytes\x12%\n" +
+	"\x0eretained_bytes\x18\x05 \x01(\x04R\rretainedBytes\"\x15\n" +
+	"\x13RuntimeStatsRequest\"\xe0\x01\n" +
+	"\x14RuntimeStatsResponse\x12*\n" +
+	"\x06memory\x18\x01 \x01(\v2\x12.delta.MemoryStatsR\x06memory\x12.\n" +
+	"\x13table_cache_entries\x18\x02 \x01(\x03R\x11tableCacheEntries\x125\n" +
+	"\x17table_cache_max_entries\x18\x03 \x01(\x03R\x14tableCacheMaxEntries\x125\n" +
+	"\x17table_cache_ttl_seconds\x18\x04 \x01(\x03R\x14tableCacheTtlSeconds\"\\\n" +
+	"\x16ClearTableCacheRequest\x12\x1b\n" +
+	"\ttable_uri\x18\x01 \x01(\tR\btableUri\x12%\n" +
+	"\x0erelease_memory\x18\x02 \x01(\bR\rreleaseMemory\"\xe0\x01\n" +
+	"\x17ClearTableCacheResponse\x12%\n" +
+	"\x0etables_removed\x18\x01 \x01(\x03R\rtablesRemoved\x12.\n" +
+	"\x13table_cache_entries\x18\x02 \x01(\x03R\x11tableCacheEntries\x127\n" +
+	"\rmemory_before\x18\x03 \x01(\v2\x12.delta.MemoryStatsR\fmemoryBefore\x125\n" +
+	"\fmemory_after\x18\x04 \x01(\v2\x12.delta.MemoryStatsR\vmemoryAfter\"\x16\n" +
+	"\x14ReleaseMemoryRequest\"\x87\x01\n" +
+	"\x15ReleaseMemoryResponse\x127\n" +
+	"\rmemory_before\x18\x01 \x01(\v2\x12.delta.MemoryStatsR\fmemoryBefore\x125\n" +
+	"\fmemory_after\x18\x02 \x01(\v2\x12.delta.MemoryStatsR\vmemoryAfter\"n\n" +
 	"\rVacuumRequest\x12\x1b\n" +
 	"\ttable_uri\x18\x01 \x01(\tR\btableUri\x12'\n" +
 	"\x0fretention_hours\x18\x02 \x01(\x02R\x0eretentionHours\x12\x17\n" +
@@ -1398,17 +2175,22 @@ const file_delta_proto_rawDesc = "" +
 	"\x0eVacuumResponse\x12#\n" +
 	"\rdeleted_files\x18\x01 \x03(\tR\fdeletedFiles\x12\x1f\n" +
 	"\vnum_deleted\x18\x02 \x01(\x03R\n" +
-	"numDeleted2\xda\x04\n" +
+	"numDeleted2\xdb\a\n" +
 	"\fDeltaService\x125\n" +
 	"\x06Health\x12\x14.delta.HealthRequest\x1a\x15.delta.HealthResponse\x12D\n" +
 	"\vCreateTable\x12\x19.delta.CreateTableRequest\x1a\x1a.delta.CreateTableResponse\x122\n" +
-	"\x05Write\x12\x13.delta.WriteRequest\x1a\x14.delta.WriteResponse\x12/\n" +
+	"\x05Write\x12\x13.delta.WriteRequest\x1a\x14.delta.WriteResponse\x125\n" +
+	"\x06Delete\x12\x14.delta.DeleteRequest\x1a\x15.delta.DeleteResponse\x12/\n" +
 	"\x04Read\x12\x12.delta.ReadRequest\x1a\x13.delta.ReadResponse\x12G\n" +
 	"\fGetTableInfo\x12\x1a.delta.GetTableInfoRequest\x1a\x1b.delta.GetTableInfoResponse\x128\n" +
 	"\aHistory\x12\x15.delta.HistoryRequest\x1a\x16.delta.HistoryResponse\x125\n" +
 	"\x06Vacuum\x12\x14.delta.VacuumRequest\x1a\x15.delta.VacuumResponse\x12;\n" +
 	"\bOptimize\x12\x16.delta.OptimizeRequest\x1a\x17.delta.OptimizeResponse\x12q\n" +
-	"\x1aRewriteCheckpointMultipart\x12(.delta.RewriteCheckpointMultipartRequest\x1a).delta.RewriteCheckpointMultipartResponseB5Z3github.com/ghazibendahmane/go-delta-rs/gen/go/deltab\x06proto3"
+	"\x1aRewriteCheckpointMultipart\x12(.delta.RewriteCheckpointMultipartRequest\x1a).delta.RewriteCheckpointMultipartResponse\x12a\n" +
+	"\x18CheckStorageCapabilities\x12!.delta.StorageCapabilitiesRequest\x1a\".delta.StorageCapabilitiesResponse\x12G\n" +
+	"\fRuntimeStats\x12\x1a.delta.RuntimeStatsRequest\x1a\x1b.delta.RuntimeStatsResponse\x12P\n" +
+	"\x0fClearTableCache\x12\x1d.delta.ClearTableCacheRequest\x1a\x1e.delta.ClearTableCacheResponse\x12J\n" +
+	"\rReleaseMemory\x12\x1b.delta.ReleaseMemoryRequest\x1a\x1c.delta.ReleaseMemoryResponseB5Z3github.com/ghazibendahmane/go-delta-rs/gen/go/deltab\x06proto3"
 
 var (
 	file_delta_proto_rawDescOnce sync.Once
@@ -1422,7 +2204,7 @@ func file_delta_proto_rawDescGZIP() []byte {
 	return file_delta_proto_rawDescData
 }
 
-var file_delta_proto_msgTypes = make([]protoimpl.MessageInfo, 20)
+var file_delta_proto_msgTypes = make([]protoimpl.MessageInfo, 32)
 var file_delta_proto_goTypes = []any{
 	(*HealthRequest)(nil),                      // 0: delta.HealthRequest
 	(*HealthResponse)(nil),                     // 1: delta.HealthResponse
@@ -1431,48 +2213,76 @@ var file_delta_proto_goTypes = []any{
 	(*CreateTableResponse)(nil),                // 4: delta.CreateTableResponse
 	(*WriteRequest)(nil),                       // 5: delta.WriteRequest
 	(*WriteResponse)(nil),                      // 6: delta.WriteResponse
-	(*ReadRequest)(nil),                        // 7: delta.ReadRequest
-	(*ReadResponse)(nil),                       // 8: delta.ReadResponse
-	(*GetTableInfoRequest)(nil),                // 9: delta.GetTableInfoRequest
-	(*GetTableInfoResponse)(nil),               // 10: delta.GetTableInfoResponse
-	(*HistoryRequest)(nil),                     // 11: delta.HistoryRequest
-	(*CommitInfo)(nil),                         // 12: delta.CommitInfo
-	(*HistoryResponse)(nil),                    // 13: delta.HistoryResponse
-	(*OptimizeRequest)(nil),                    // 14: delta.OptimizeRequest
-	(*OptimizeResponse)(nil),                   // 15: delta.OptimizeResponse
-	(*RewriteCheckpointMultipartRequest)(nil),  // 16: delta.RewriteCheckpointMultipartRequest
-	(*RewriteCheckpointMultipartResponse)(nil), // 17: delta.RewriteCheckpointMultipartResponse
-	(*VacuumRequest)(nil),                      // 18: delta.VacuumRequest
-	(*VacuumResponse)(nil),                     // 19: delta.VacuumResponse
+	(*DeleteRequest)(nil),                      // 7: delta.DeleteRequest
+	(*DeleteResponse)(nil),                     // 8: delta.DeleteResponse
+	(*ReadRequest)(nil),                        // 9: delta.ReadRequest
+	(*ReadResponse)(nil),                       // 10: delta.ReadResponse
+	(*GetTableInfoRequest)(nil),                // 11: delta.GetTableInfoRequest
+	(*GetTableInfoResponse)(nil),               // 12: delta.GetTableInfoResponse
+	(*HistoryRequest)(nil),                     // 13: delta.HistoryRequest
+	(*CommitInfo)(nil),                         // 14: delta.CommitInfo
+	(*HistoryResponse)(nil),                    // 15: delta.HistoryResponse
+	(*OptimizeRequest)(nil),                    // 16: delta.OptimizeRequest
+	(*OptimizeResponse)(nil),                   // 17: delta.OptimizeResponse
+	(*RewriteCheckpointMultipartRequest)(nil),  // 18: delta.RewriteCheckpointMultipartRequest
+	(*RewriteCheckpointMultipartResponse)(nil), // 19: delta.RewriteCheckpointMultipartResponse
+	(*StorageCapabilitiesRequest)(nil),         // 20: delta.StorageCapabilitiesRequest
+	(*CapabilityCheck)(nil),                    // 21: delta.CapabilityCheck
+	(*StorageCapabilitiesResponse)(nil),        // 22: delta.StorageCapabilitiesResponse
+	(*MemoryStats)(nil),                        // 23: delta.MemoryStats
+	(*RuntimeStatsRequest)(nil),                // 24: delta.RuntimeStatsRequest
+	(*RuntimeStatsResponse)(nil),               // 25: delta.RuntimeStatsResponse
+	(*ClearTableCacheRequest)(nil),             // 26: delta.ClearTableCacheRequest
+	(*ClearTableCacheResponse)(nil),            // 27: delta.ClearTableCacheResponse
+	(*ReleaseMemoryRequest)(nil),               // 28: delta.ReleaseMemoryRequest
+	(*ReleaseMemoryResponse)(nil),              // 29: delta.ReleaseMemoryResponse
+	(*VacuumRequest)(nil),                      // 30: delta.VacuumRequest
+	(*VacuumResponse)(nil),                     // 31: delta.VacuumResponse
 }
 var file_delta_proto_depIdxs = []int32{
 	2,  // 0: delta.CreateTableRequest.schema:type_name -> delta.ColumnDef
 	2,  // 1: delta.WriteRequest.schema:type_name -> delta.ColumnDef
 	2,  // 2: delta.GetTableInfoResponse.schema:type_name -> delta.ColumnDef
-	12, // 3: delta.HistoryResponse.commits:type_name -> delta.CommitInfo
-	0,  // 4: delta.DeltaService.Health:input_type -> delta.HealthRequest
-	3,  // 5: delta.DeltaService.CreateTable:input_type -> delta.CreateTableRequest
-	5,  // 6: delta.DeltaService.Write:input_type -> delta.WriteRequest
-	7,  // 7: delta.DeltaService.Read:input_type -> delta.ReadRequest
-	9,  // 8: delta.DeltaService.GetTableInfo:input_type -> delta.GetTableInfoRequest
-	11, // 9: delta.DeltaService.History:input_type -> delta.HistoryRequest
-	18, // 10: delta.DeltaService.Vacuum:input_type -> delta.VacuumRequest
-	14, // 11: delta.DeltaService.Optimize:input_type -> delta.OptimizeRequest
-	16, // 12: delta.DeltaService.RewriteCheckpointMultipart:input_type -> delta.RewriteCheckpointMultipartRequest
-	1,  // 13: delta.DeltaService.Health:output_type -> delta.HealthResponse
-	4,  // 14: delta.DeltaService.CreateTable:output_type -> delta.CreateTableResponse
-	6,  // 15: delta.DeltaService.Write:output_type -> delta.WriteResponse
-	8,  // 16: delta.DeltaService.Read:output_type -> delta.ReadResponse
-	10, // 17: delta.DeltaService.GetTableInfo:output_type -> delta.GetTableInfoResponse
-	13, // 18: delta.DeltaService.History:output_type -> delta.HistoryResponse
-	19, // 19: delta.DeltaService.Vacuum:output_type -> delta.VacuumResponse
-	15, // 20: delta.DeltaService.Optimize:output_type -> delta.OptimizeResponse
-	17, // 21: delta.DeltaService.RewriteCheckpointMultipart:output_type -> delta.RewriteCheckpointMultipartResponse
-	13, // [13:22] is the sub-list for method output_type
-	4,  // [4:13] is the sub-list for method input_type
-	4,  // [4:4] is the sub-list for extension type_name
-	4,  // [4:4] is the sub-list for extension extendee
-	0,  // [0:4] is the sub-list for field type_name
+	14, // 3: delta.HistoryResponse.commits:type_name -> delta.CommitInfo
+	21, // 4: delta.StorageCapabilitiesResponse.checks:type_name -> delta.CapabilityCheck
+	23, // 5: delta.RuntimeStatsResponse.memory:type_name -> delta.MemoryStats
+	23, // 6: delta.ClearTableCacheResponse.memory_before:type_name -> delta.MemoryStats
+	23, // 7: delta.ClearTableCacheResponse.memory_after:type_name -> delta.MemoryStats
+	23, // 8: delta.ReleaseMemoryResponse.memory_before:type_name -> delta.MemoryStats
+	23, // 9: delta.ReleaseMemoryResponse.memory_after:type_name -> delta.MemoryStats
+	0,  // 10: delta.DeltaService.Health:input_type -> delta.HealthRequest
+	3,  // 11: delta.DeltaService.CreateTable:input_type -> delta.CreateTableRequest
+	5,  // 12: delta.DeltaService.Write:input_type -> delta.WriteRequest
+	7,  // 13: delta.DeltaService.Delete:input_type -> delta.DeleteRequest
+	9,  // 14: delta.DeltaService.Read:input_type -> delta.ReadRequest
+	11, // 15: delta.DeltaService.GetTableInfo:input_type -> delta.GetTableInfoRequest
+	13, // 16: delta.DeltaService.History:input_type -> delta.HistoryRequest
+	30, // 17: delta.DeltaService.Vacuum:input_type -> delta.VacuumRequest
+	16, // 18: delta.DeltaService.Optimize:input_type -> delta.OptimizeRequest
+	18, // 19: delta.DeltaService.RewriteCheckpointMultipart:input_type -> delta.RewriteCheckpointMultipartRequest
+	20, // 20: delta.DeltaService.CheckStorageCapabilities:input_type -> delta.StorageCapabilitiesRequest
+	24, // 21: delta.DeltaService.RuntimeStats:input_type -> delta.RuntimeStatsRequest
+	26, // 22: delta.DeltaService.ClearTableCache:input_type -> delta.ClearTableCacheRequest
+	28, // 23: delta.DeltaService.ReleaseMemory:input_type -> delta.ReleaseMemoryRequest
+	1,  // 24: delta.DeltaService.Health:output_type -> delta.HealthResponse
+	4,  // 25: delta.DeltaService.CreateTable:output_type -> delta.CreateTableResponse
+	6,  // 26: delta.DeltaService.Write:output_type -> delta.WriteResponse
+	8,  // 27: delta.DeltaService.Delete:output_type -> delta.DeleteResponse
+	10, // 28: delta.DeltaService.Read:output_type -> delta.ReadResponse
+	12, // 29: delta.DeltaService.GetTableInfo:output_type -> delta.GetTableInfoResponse
+	15, // 30: delta.DeltaService.History:output_type -> delta.HistoryResponse
+	31, // 31: delta.DeltaService.Vacuum:output_type -> delta.VacuumResponse
+	17, // 32: delta.DeltaService.Optimize:output_type -> delta.OptimizeResponse
+	19, // 33: delta.DeltaService.RewriteCheckpointMultipart:output_type -> delta.RewriteCheckpointMultipartResponse
+	22, // 34: delta.DeltaService.CheckStorageCapabilities:output_type -> delta.StorageCapabilitiesResponse
+	25, // 35: delta.DeltaService.RuntimeStats:output_type -> delta.RuntimeStatsResponse
+	27, // 36: delta.DeltaService.ClearTableCache:output_type -> delta.ClearTableCacheResponse
+	29, // 37: delta.DeltaService.ReleaseMemory:output_type -> delta.ReleaseMemoryResponse
+	24, // [24:38] is the sub-list for method output_type
+	10, // [10:24] is the sub-list for method input_type
+	10, // [10:10] is the sub-list for extension type_name
+	10, // [10:10] is the sub-list for extension extendee
+	0,  // [0:10] is the sub-list for field type_name
 }
 
 func init() { file_delta_proto_init() }
@@ -1486,7 +2296,7 @@ func file_delta_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_delta_proto_rawDesc), len(file_delta_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   20,
+			NumMessages:   32,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

@@ -22,12 +22,17 @@ const (
 	DeltaService_Health_FullMethodName                     = "/delta.DeltaService/Health"
 	DeltaService_CreateTable_FullMethodName                = "/delta.DeltaService/CreateTable"
 	DeltaService_Write_FullMethodName                      = "/delta.DeltaService/Write"
+	DeltaService_Delete_FullMethodName                     = "/delta.DeltaService/Delete"
 	DeltaService_Read_FullMethodName                       = "/delta.DeltaService/Read"
 	DeltaService_GetTableInfo_FullMethodName               = "/delta.DeltaService/GetTableInfo"
 	DeltaService_History_FullMethodName                    = "/delta.DeltaService/History"
 	DeltaService_Vacuum_FullMethodName                     = "/delta.DeltaService/Vacuum"
 	DeltaService_Optimize_FullMethodName                   = "/delta.DeltaService/Optimize"
 	DeltaService_RewriteCheckpointMultipart_FullMethodName = "/delta.DeltaService/RewriteCheckpointMultipart"
+	DeltaService_CheckStorageCapabilities_FullMethodName   = "/delta.DeltaService/CheckStorageCapabilities"
+	DeltaService_RuntimeStats_FullMethodName               = "/delta.DeltaService/RuntimeStats"
+	DeltaService_ClearTableCache_FullMethodName            = "/delta.DeltaService/ClearTableCache"
+	DeltaService_ReleaseMemory_FullMethodName              = "/delta.DeltaService/ReleaseMemory"
 )
 
 // DeltaServiceClient is the client API for DeltaService service.
@@ -37,12 +42,17 @@ type DeltaServiceClient interface {
 	Health(ctx context.Context, in *HealthRequest, opts ...grpc.CallOption) (*HealthResponse, error)
 	CreateTable(ctx context.Context, in *CreateTableRequest, opts ...grpc.CallOption) (*CreateTableResponse, error)
 	Write(ctx context.Context, in *WriteRequest, opts ...grpc.CallOption) (*WriteResponse, error)
+	Delete(ctx context.Context, in *DeleteRequest, opts ...grpc.CallOption) (*DeleteResponse, error)
 	Read(ctx context.Context, in *ReadRequest, opts ...grpc.CallOption) (*ReadResponse, error)
 	GetTableInfo(ctx context.Context, in *GetTableInfoRequest, opts ...grpc.CallOption) (*GetTableInfoResponse, error)
 	History(ctx context.Context, in *HistoryRequest, opts ...grpc.CallOption) (*HistoryResponse, error)
 	Vacuum(ctx context.Context, in *VacuumRequest, opts ...grpc.CallOption) (*VacuumResponse, error)
 	Optimize(ctx context.Context, in *OptimizeRequest, opts ...grpc.CallOption) (*OptimizeResponse, error)
 	RewriteCheckpointMultipart(ctx context.Context, in *RewriteCheckpointMultipartRequest, opts ...grpc.CallOption) (*RewriteCheckpointMultipartResponse, error)
+	CheckStorageCapabilities(ctx context.Context, in *StorageCapabilitiesRequest, opts ...grpc.CallOption) (*StorageCapabilitiesResponse, error)
+	RuntimeStats(ctx context.Context, in *RuntimeStatsRequest, opts ...grpc.CallOption) (*RuntimeStatsResponse, error)
+	ClearTableCache(ctx context.Context, in *ClearTableCacheRequest, opts ...grpc.CallOption) (*ClearTableCacheResponse, error)
+	ReleaseMemory(ctx context.Context, in *ReleaseMemoryRequest, opts ...grpc.CallOption) (*ReleaseMemoryResponse, error)
 }
 
 type deltaServiceClient struct {
@@ -77,6 +87,16 @@ func (c *deltaServiceClient) Write(ctx context.Context, in *WriteRequest, opts .
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(WriteResponse)
 	err := c.cc.Invoke(ctx, DeltaService_Write_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *deltaServiceClient) Delete(ctx context.Context, in *DeleteRequest, opts ...grpc.CallOption) (*DeleteResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(DeleteResponse)
+	err := c.cc.Invoke(ctx, DeltaService_Delete_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -143,6 +163,46 @@ func (c *deltaServiceClient) RewriteCheckpointMultipart(ctx context.Context, in 
 	return out, nil
 }
 
+func (c *deltaServiceClient) CheckStorageCapabilities(ctx context.Context, in *StorageCapabilitiesRequest, opts ...grpc.CallOption) (*StorageCapabilitiesResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(StorageCapabilitiesResponse)
+	err := c.cc.Invoke(ctx, DeltaService_CheckStorageCapabilities_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *deltaServiceClient) RuntimeStats(ctx context.Context, in *RuntimeStatsRequest, opts ...grpc.CallOption) (*RuntimeStatsResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(RuntimeStatsResponse)
+	err := c.cc.Invoke(ctx, DeltaService_RuntimeStats_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *deltaServiceClient) ClearTableCache(ctx context.Context, in *ClearTableCacheRequest, opts ...grpc.CallOption) (*ClearTableCacheResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ClearTableCacheResponse)
+	err := c.cc.Invoke(ctx, DeltaService_ClearTableCache_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *deltaServiceClient) ReleaseMemory(ctx context.Context, in *ReleaseMemoryRequest, opts ...grpc.CallOption) (*ReleaseMemoryResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ReleaseMemoryResponse)
+	err := c.cc.Invoke(ctx, DeltaService_ReleaseMemory_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // DeltaServiceServer is the server API for DeltaService service.
 // All implementations must embed UnimplementedDeltaServiceServer
 // for forward compatibility.
@@ -150,12 +210,17 @@ type DeltaServiceServer interface {
 	Health(context.Context, *HealthRequest) (*HealthResponse, error)
 	CreateTable(context.Context, *CreateTableRequest) (*CreateTableResponse, error)
 	Write(context.Context, *WriteRequest) (*WriteResponse, error)
+	Delete(context.Context, *DeleteRequest) (*DeleteResponse, error)
 	Read(context.Context, *ReadRequest) (*ReadResponse, error)
 	GetTableInfo(context.Context, *GetTableInfoRequest) (*GetTableInfoResponse, error)
 	History(context.Context, *HistoryRequest) (*HistoryResponse, error)
 	Vacuum(context.Context, *VacuumRequest) (*VacuumResponse, error)
 	Optimize(context.Context, *OptimizeRequest) (*OptimizeResponse, error)
 	RewriteCheckpointMultipart(context.Context, *RewriteCheckpointMultipartRequest) (*RewriteCheckpointMultipartResponse, error)
+	CheckStorageCapabilities(context.Context, *StorageCapabilitiesRequest) (*StorageCapabilitiesResponse, error)
+	RuntimeStats(context.Context, *RuntimeStatsRequest) (*RuntimeStatsResponse, error)
+	ClearTableCache(context.Context, *ClearTableCacheRequest) (*ClearTableCacheResponse, error)
+	ReleaseMemory(context.Context, *ReleaseMemoryRequest) (*ReleaseMemoryResponse, error)
 	mustEmbedUnimplementedDeltaServiceServer()
 }
 
@@ -175,6 +240,9 @@ func (UnimplementedDeltaServiceServer) CreateTable(context.Context, *CreateTable
 func (UnimplementedDeltaServiceServer) Write(context.Context, *WriteRequest) (*WriteResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method Write not implemented")
 }
+func (UnimplementedDeltaServiceServer) Delete(context.Context, *DeleteRequest) (*DeleteResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method Delete not implemented")
+}
 func (UnimplementedDeltaServiceServer) Read(context.Context, *ReadRequest) (*ReadResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method Read not implemented")
 }
@@ -192,6 +260,18 @@ func (UnimplementedDeltaServiceServer) Optimize(context.Context, *OptimizeReques
 }
 func (UnimplementedDeltaServiceServer) RewriteCheckpointMultipart(context.Context, *RewriteCheckpointMultipartRequest) (*RewriteCheckpointMultipartResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method RewriteCheckpointMultipart not implemented")
+}
+func (UnimplementedDeltaServiceServer) CheckStorageCapabilities(context.Context, *StorageCapabilitiesRequest) (*StorageCapabilitiesResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method CheckStorageCapabilities not implemented")
+}
+func (UnimplementedDeltaServiceServer) RuntimeStats(context.Context, *RuntimeStatsRequest) (*RuntimeStatsResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method RuntimeStats not implemented")
+}
+func (UnimplementedDeltaServiceServer) ClearTableCache(context.Context, *ClearTableCacheRequest) (*ClearTableCacheResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method ClearTableCache not implemented")
+}
+func (UnimplementedDeltaServiceServer) ReleaseMemory(context.Context, *ReleaseMemoryRequest) (*ReleaseMemoryResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method ReleaseMemory not implemented")
 }
 func (UnimplementedDeltaServiceServer) mustEmbedUnimplementedDeltaServiceServer() {}
 func (UnimplementedDeltaServiceServer) testEmbeddedByValue()                      {}
@@ -264,6 +344,24 @@ func _DeltaService_Write_Handler(srv interface{}, ctx context.Context, dec func(
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(DeltaServiceServer).Write(ctx, req.(*WriteRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _DeltaService_Delete_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(DeleteRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(DeltaServiceServer).Delete(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: DeltaService_Delete_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(DeltaServiceServer).Delete(ctx, req.(*DeleteRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -376,6 +474,78 @@ func _DeltaService_RewriteCheckpointMultipart_Handler(srv interface{}, ctx conte
 	return interceptor(ctx, in, info, handler)
 }
 
+func _DeltaService_CheckStorageCapabilities_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(StorageCapabilitiesRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(DeltaServiceServer).CheckStorageCapabilities(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: DeltaService_CheckStorageCapabilities_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(DeltaServiceServer).CheckStorageCapabilities(ctx, req.(*StorageCapabilitiesRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _DeltaService_RuntimeStats_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(RuntimeStatsRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(DeltaServiceServer).RuntimeStats(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: DeltaService_RuntimeStats_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(DeltaServiceServer).RuntimeStats(ctx, req.(*RuntimeStatsRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _DeltaService_ClearTableCache_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ClearTableCacheRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(DeltaServiceServer).ClearTableCache(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: DeltaService_ClearTableCache_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(DeltaServiceServer).ClearTableCache(ctx, req.(*ClearTableCacheRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _DeltaService_ReleaseMemory_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ReleaseMemoryRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(DeltaServiceServer).ReleaseMemory(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: DeltaService_ReleaseMemory_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(DeltaServiceServer).ReleaseMemory(ctx, req.(*ReleaseMemoryRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // DeltaService_ServiceDesc is the grpc.ServiceDesc for DeltaService service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -394,6 +564,10 @@ var DeltaService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "Write",
 			Handler:    _DeltaService_Write_Handler,
+		},
+		{
+			MethodName: "Delete",
+			Handler:    _DeltaService_Delete_Handler,
 		},
 		{
 			MethodName: "Read",
@@ -418,6 +592,22 @@ var DeltaService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "RewriteCheckpointMultipart",
 			Handler:    _DeltaService_RewriteCheckpointMultipart_Handler,
+		},
+		{
+			MethodName: "CheckStorageCapabilities",
+			Handler:    _DeltaService_CheckStorageCapabilities_Handler,
+		},
+		{
+			MethodName: "RuntimeStats",
+			Handler:    _DeltaService_RuntimeStats_Handler,
+		},
+		{
+			MethodName: "ClearTableCache",
+			Handler:    _DeltaService_ClearTableCache_Handler,
+		},
+		{
+			MethodName: "ReleaseMemory",
+			Handler:    _DeltaService_ReleaseMemory_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},

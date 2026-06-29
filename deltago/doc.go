@@ -7,7 +7,8 @@
 //     on the GitHub releases page.
 //
 //   - This Go package, which manages the sidecar process lifecycle and
-//     exposes a clean API for creating, reading, and writing Delta tables.
+//     exposes a clean API for creating, reading, writing, deleting, and
+//     maintaining Delta tables.
 //
 // # Quick start
 //

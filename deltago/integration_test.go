@@ -16,10 +16,18 @@ const binaryPath = "../delta-server/target/release/delta-server"
 
 func newTestSidecar(t *testing.T) (*deltago.Sidecar, *deltago.DeltaClient) {
 	t.Helper()
+	return newTestSidecarWithOptions(t, deltago.SidecarOptions{})
+}
+
+func newTestSidecarWithOptions(t *testing.T, opts deltago.SidecarOptions) (*deltago.Sidecar, *deltago.DeltaClient) {
+	t.Helper()
 	if _, err := os.Stat(binaryPath); os.IsNotExist(err) {
 		t.Skipf("delta-server binary not found at %s — run 'make build-server' first", binaryPath)
 	}
-	sidecar := deltago.NewSidecar(deltago.SidecarOptions{BinaryPath: binaryPath})
+	if opts.BinaryPath == "" {
+		opts.BinaryPath = binaryPath
+	}
+	sidecar := deltago.NewSidecar(opts)
 	if err := sidecar.Start(context.Background()); err != nil {
 		t.Fatalf("start sidecar: %v", err)
 	}
@@ -244,6 +252,49 @@ func TestIntegration_WriteWithOptionsSkipsDuplicateAppTransaction(t *testing.T) 
 	}
 }
 
+func TestIntegration_WriteAppendCreateIfMissingWithPartition(t *testing.T) {
+	_, c := newTestSidecar(t)
+	ctx := context.Background()
+	uri := tempTableURI(t)
+
+	schema := []deltago.Column{
+		{Name: "date", Type: "string", Nullable: false},
+		{Name: "value", Type: "int64", Nullable: true},
+	}
+	rows := []deltago.Row{
+		{"date": "2026-06-27", "value": 1},
+		{"date": "2026-06-28", "value": 2},
+	}
+	result, err := c.WriteResult(ctx, uri, deltago.WriteAppend, rows, schema, &deltago.WriteOptions{
+		CreateIfMissing: true,
+		PartitionColumns: []string{
+			"date",
+		},
+	})
+	if err != nil {
+		t.Fatalf("WriteResult create_if_missing: %v", err)
+	}
+	if result.RowsWritten != int64(len(rows)) {
+		t.Fatalf("RowsWritten = %d, want %d", result.RowsWritten, len(rows))
+	}
+
+	info, err := c.GetTableInfo(ctx, uri)
+	if err != nil {
+		t.Fatalf("GetTableInfo: %v", err)
+	}
+	if len(info.PartitionColumns) != 1 || info.PartitionColumns[0] != "date" {
+		t.Fatalf("PartitionColumns = %v, want [date]", info.PartitionColumns)
+	}
+
+	got, err := c.Read(ctx, uri, nil)
+	if err != nil {
+		t.Fatalf("Read: %v", err)
+	}
+	if len(got) != len(rows) {
+		t.Fatalf("read %d rows, want %d", len(got), len(rows))
+	}
+}
+
 // ── Read with options ─────────────────────────────────────────────────────────
 
 func TestIntegration_Read_Filter(t *testing.T) {
@@ -269,6 +320,106 @@ func TestIntegration_Read_Filter(t *testing.T) {
 	}
 	if len(got) != 2 {
 		t.Errorf("expected 2 rows with score > 8.0, got %d", len(got))
+	}
+}
+
+// ── Delete ───────────────────────────────────────────────────────────────────
+
+func TestIntegration_DeletePredicate(t *testing.T) {
+	_, c := newTestSidecar(t)
+	ctx := context.Background()
+	uri := tempTableURI(t)
+
+	if err := c.CreateTable(ctx, uri, testSchema, nil); err != nil {
+		t.Fatal(err)
+	}
+	rows := []deltago.Row{
+		{"id": 1, "name": "alice", "score": 9.5},
+		{"id": 2, "name": "bob", "score": 7.2},
+		{"id": 3, "name": "carol", "score": 8.8},
+	}
+	if err := c.Write(ctx, uri, deltago.WriteAppend, rows, testSchema); err != nil {
+		t.Fatalf("Write: %v", err)
+	}
+
+	result, err := c.Delete(ctx, uri, &deltago.DeleteOptions{Predicate: "id = 2"})
+	if err != nil {
+		t.Fatalf("Delete: %v", err)
+	}
+	if result.RowsDeleted != 1 {
+		t.Fatalf("RowsDeleted = %d, want 1", result.RowsDeleted)
+	}
+
+	got, err := c.Read(ctx, uri, nil)
+	if err != nil {
+		t.Fatalf("Read after delete: %v", err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("after delete expected 2 rows, got %d", len(got))
+	}
+	for _, row := range got {
+		if row["id"] == float64(2) {
+			t.Fatalf("deleted row still present: %#v", got)
+		}
+	}
+}
+
+func TestIntegration_DeleteRequiresPredicateUnlessAllowed(t *testing.T) {
+	_, c := newTestSidecar(t)
+	ctx := context.Background()
+	uri := tempTableURI(t)
+
+	if err := c.CreateTable(ctx, uri, testSchema, nil); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.Write(ctx, uri, deltago.WriteAppend, []deltago.Row{{"id": 1, "name": "alice", "score": 9.5}}, testSchema); err != nil {
+		t.Fatalf("Write: %v", err)
+	}
+
+	if _, err := c.Delete(ctx, uri, nil); err == nil {
+		t.Fatal("expected error for empty predicate without AllowFullTableDelete")
+	}
+
+	result, err := c.Delete(ctx, uri, &deltago.DeleteOptions{AllowFullTableDelete: true})
+	if err != nil {
+		t.Fatalf("full table delete: %v", err)
+	}
+	if result.Version <= 0 {
+		t.Fatalf("Version = %d, want a committed delete version", result.Version)
+	}
+	got, err := c.Read(ctx, uri, nil)
+	if err != nil {
+		t.Fatalf("Read after full table delete: %v", err)
+	}
+	if len(got) != 0 {
+		t.Fatalf("after full table delete expected 0 rows, got %d", len(got))
+	}
+}
+
+// ── Storage capability probe ─────────────────────────────────────────────────
+
+func TestIntegration_CheckStorageCapabilities(t *testing.T) {
+	_, c := newTestSidecar(t)
+	ctx := context.Background()
+	uri := tempTableURI(t)
+
+	result, err := c.CheckStorageCapabilities(ctx, uri)
+	if err != nil {
+		t.Fatalf("CheckStorageCapabilities: %v", err)
+	}
+	for _, name := range []string{
+		"put",
+		"head",
+		"get",
+		"list",
+		"conditional_put_create",
+		"conditional_put_conflict",
+		"copy_if_not_exists",
+		"copy_if_not_exists_conflict",
+	} {
+		if !result.Supported(name) {
+			t.Fatalf("%s not supported: %#v", name, result.Checks)
+		}
 	}
 }
 
@@ -434,6 +585,71 @@ func TestIntegration_CachedWrites(t *testing.T) {
 	// version should be 20 (create is v0, then 20 writes)
 	if info.Version != 20 {
 		t.Errorf("expected version 20, got %d", info.Version)
+	}
+}
+
+func TestIntegration_RuntimeStatsAndClearTableCache(t *testing.T) {
+	_, c := newTestSidecar(t)
+	ctx := context.Background()
+	uri := tempTableURI(t)
+
+	if err := c.CreateTable(ctx, uri, testSchema, nil); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.Write(ctx, uri, deltago.WriteAppend, []deltago.Row{{"id": 1, "name": "alice", "score": 9.5}}, testSchema); err != nil {
+		t.Fatal(err)
+	}
+
+	stats, err := c.RuntimeStats(ctx)
+	if err != nil {
+		t.Fatalf("RuntimeStats: %v", err)
+	}
+	if stats.TableCacheEntries == 0 {
+		t.Fatalf("expected table cache entry after write, got %+v", stats)
+	}
+	if stats.TableCacheMaxEntries == 0 {
+		t.Fatalf("expected default table cache to be enabled, got %+v", stats)
+	}
+
+	cleared, err := c.ClearTableCache(ctx, uri, true)
+	if err != nil {
+		t.Fatalf("ClearTableCache: %v", err)
+	}
+	if cleared.TablesRemoved != 1 {
+		t.Fatalf("TablesRemoved = %d, want 1", cleared.TablesRemoved)
+	}
+	if cleared.TableCacheEntries != 0 {
+		t.Fatalf("TableCacheEntries = %d, want 0", cleared.TableCacheEntries)
+	}
+
+	if _, err := c.ReleaseMemory(ctx); err != nil {
+		t.Fatalf("ReleaseMemory: %v", err)
+	}
+}
+
+func TestIntegration_DisableTableCache(t *testing.T) {
+	_, c := newTestSidecarWithOptions(t, deltago.SidecarOptions{
+		Runtime: deltago.RuntimeConfig{DisableTableCache: true},
+	})
+	ctx := context.Background()
+	uri := tempTableURI(t)
+
+	if err := c.CreateTable(ctx, uri, testSchema, nil); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.Write(ctx, uri, deltago.WriteAppend, []deltago.Row{{"id": 1, "name": "alice", "score": 9.5}}, testSchema); err != nil {
+		t.Fatal(err)
+	}
+
+	stats, err := c.RuntimeStats(ctx)
+	if err != nil {
+		t.Fatalf("RuntimeStats: %v", err)
+	}
+	if stats.TableCacheEntries != 0 {
+		t.Fatalf("TableCacheEntries = %d, want 0", stats.TableCacheEntries)
+	}
+	if stats.TableCacheMaxEntries != 0 {
+		t.Fatalf("TableCacheMaxEntries = %d, want 0", stats.TableCacheMaxEntries)
 	}
 }
 

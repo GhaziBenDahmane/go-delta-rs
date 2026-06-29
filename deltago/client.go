@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strconv"
+	"time"
 
 	deltapb "github.com/ghazibendahmane/go-delta-rs/gen/go/delta"
 )
@@ -24,7 +25,7 @@ func NewDeltaClient(client deltapb.DeltaServiceClient) *DeltaClient {
 func (c *DeltaClient) Health(ctx context.Context) (string, error) {
 	resp, err := c.client.Health(ctx, &deltapb.HealthRequest{})
 	if err != nil {
-		return "", err
+		return "", wrapDeltaError(err)
 	}
 	return resp.Version, nil
 }
@@ -39,7 +40,7 @@ func (c *DeltaClient) CreateTable(ctx context.Context, tableURI string, schema [
 		Schema:           cols,
 		PartitionColumns: partitionCols,
 	})
-	return err
+	return wrapDeltaError(err)
 }
 
 // EnsureTable creates the Delta table at tableURI if it does not already exist.
@@ -53,7 +54,7 @@ func (c *DeltaClient) EnsureTable(ctx context.Context, tableURI string, schema [
 		PartitionColumns: partitionCols,
 	})
 	if err != nil {
-		return false, err
+		return false, wrapDeltaError(err)
 	}
 	return resp.Created, nil
 }
@@ -87,16 +88,41 @@ func (c *DeltaClient) WriteResult(ctx context.Context, tableURI string, mode Wri
 		req.BatchId = opts.BatchID
 		req.AppTransactionId = opts.AppTransactionID
 		req.AppTransactionVersion = opts.AppTransactionVersion
+		req.CreateIfMissing = opts.CreateIfMissing
+		req.PartitionColumns = opts.PartitionColumns
 	}
 	resp, err := c.client.Write(ctx, req)
 	if err != nil {
-		return nil, err
+		return nil, wrapDeltaError(err)
 	}
 	return &WriteResult{
 		Version:          resp.Version,
 		RowsWritten:      resp.RowsWritten,
 		AlreadyCommitted: resp.AlreadyCommitted,
 		BatchID:          resp.BatchId,
+	}, nil
+}
+
+// Delete removes rows matching opts.Predicate from a Delta table.
+func (c *DeltaClient) Delete(ctx context.Context, tableURI string, opts *DeleteOptions) (*DeleteResult, error) {
+	req := &deltapb.DeleteRequest{TableUri: tableURI}
+	if opts != nil {
+		req.Predicate = opts.Predicate
+		req.AllowFullTableDelete = opts.AllowFullTableDelete
+	}
+	resp, err := c.client.Delete(ctx, req)
+	if err != nil {
+		return nil, wrapDeltaError(err)
+	}
+	return &DeleteResult{
+		Version:         resp.Version,
+		FilesAdded:      resp.FilesAdded,
+		FilesRemoved:    resp.FilesRemoved,
+		RowsDeleted:     resp.RowsDeleted,
+		RowsCopied:      resp.RowsCopied,
+		ExecutionTimeMS: resp.ExecutionTimeMs,
+		ScanTimeMS:      resp.ScanTimeMs,
+		RewriteTimeMS:   resp.RewriteTimeMs,
 	}, nil
 }
 
@@ -111,7 +137,7 @@ func (c *DeltaClient) Read(ctx context.Context, tableURI string, opts *ReadOptio
 	}
 	resp, err := c.client.Read(ctx, req)
 	if err != nil {
-		return nil, err
+		return nil, wrapDeltaError(err)
 	}
 	return UnmarshalRows(resp.JsonData)
 }
@@ -120,7 +146,7 @@ func (c *DeltaClient) Read(ctx context.Context, tableURI string, opts *ReadOptio
 func (c *DeltaClient) GetTableInfo(ctx context.Context, tableURI string) (*TableInfo, error) {
 	resp, err := c.client.GetTableInfo(ctx, &deltapb.GetTableInfoRequest{TableUri: tableURI})
 	if err != nil {
-		return nil, err
+		return nil, wrapDeltaError(err)
 	}
 	return &TableInfo{
 		Version:          resp.Version,
@@ -139,7 +165,7 @@ func (c *DeltaClient) History(ctx context.Context, tableURI string, limit int) (
 		Limit:    int32(limit),
 	})
 	if err != nil {
-		return nil, err
+		return nil, wrapDeltaError(err)
 	}
 	commits := make([]CommitInfo, len(resp.Commits))
 	for i, c := range resp.Commits {
@@ -163,7 +189,7 @@ func (c *DeltaClient) Vacuum(ctx context.Context, tableURI string, retentionHour
 		DryRun:         dryRun,
 	})
 	if err != nil {
-		return nil, err
+		return nil, wrapDeltaError(err)
 	}
 	return resp.DeletedFiles, nil
 }
@@ -196,7 +222,7 @@ func (c *DeltaClient) Optimize(ctx context.Context, tableURI string, opts *Optim
 	}
 	resp, err := c.client.Optimize(ctx, req)
 	if err != nil {
-		return nil, err
+		return nil, wrapDeltaError(err)
 	}
 	return &OptimizeResult{
 		FilesAdded:          resp.FilesAdded,
@@ -217,7 +243,7 @@ func (c *DeltaClient) RewriteCheckpointMultipart(ctx context.Context, tableURI s
 	}
 	resp, err := c.client.RewriteCheckpointMultipart(ctx, req)
 	if err != nil {
-		return nil, err
+		return nil, wrapDeltaError(err)
 	}
 	return &RewriteCheckpointResult{
 		Version:          resp.Version,
@@ -231,6 +257,68 @@ func (c *DeltaClient) RewriteCheckpointMultipart(ctx context.Context, tableURI s
 		BackupPrefix:     resp.BackupPrefix,
 		CheckpointFiles:  resp.CheckpointFiles,
 		Message:          resp.Message,
+	}, nil
+}
+
+// CheckStorageCapabilities probes basic object-store operations under the
+// table's log storage root and cleans up probe objects on a best-effort basis.
+func (c *DeltaClient) CheckStorageCapabilities(ctx context.Context, tableURI string) (*StorageCapabilitiesResult, error) {
+	resp, err := c.client.CheckStorageCapabilities(ctx, &deltapb.StorageCapabilitiesRequest{TableUri: tableURI})
+	if err != nil {
+		return nil, wrapDeltaError(err)
+	}
+	checks := make([]CapabilityCheck, len(resp.Checks))
+	for i, check := range resp.Checks {
+		checks[i] = CapabilityCheck{
+			Name:      check.Name,
+			Supported: check.Supported,
+			Error:     check.Error,
+		}
+	}
+	return &StorageCapabilitiesResult{TableURI: resp.TableUri, Checks: checks}, nil
+}
+
+// RuntimeStats returns generic memory and table-cache counters from the sidecar.
+func (c *DeltaClient) RuntimeStats(ctx context.Context) (*RuntimeStats, error) {
+	resp, err := c.client.RuntimeStats(ctx, &deltapb.RuntimeStatsRequest{})
+	if err != nil {
+		return nil, wrapDeltaError(err)
+	}
+	return &RuntimeStats{
+		Memory:               fromProtoMemoryStats(resp.Memory),
+		TableCacheEntries:    resp.TableCacheEntries,
+		TableCacheMaxEntries: resp.TableCacheMaxEntries,
+		TableCacheTTL:        time.Duration(resp.TableCacheTtlSeconds) * time.Second,
+	}, nil
+}
+
+// ClearTableCache evicts cached DeltaTable state. An empty tableURI clears all
+// cached tables. Set releaseMemory to ask jemalloc to purge freed pages.
+func (c *DeltaClient) ClearTableCache(ctx context.Context, tableURI string, releaseMemory bool) (*ClearTableCacheResult, error) {
+	resp, err := c.client.ClearTableCache(ctx, &deltapb.ClearTableCacheRequest{
+		TableUri:      tableURI,
+		ReleaseMemory: releaseMemory,
+	})
+	if err != nil {
+		return nil, wrapDeltaError(err)
+	}
+	return &ClearTableCacheResult{
+		TablesRemoved:     resp.TablesRemoved,
+		TableCacheEntries: resp.TableCacheEntries,
+		MemoryBefore:      fromProtoMemoryStats(resp.MemoryBefore),
+		MemoryAfter:       fromProtoMemoryStats(resp.MemoryAfter),
+	}, nil
+}
+
+// ReleaseMemory asks jemalloc in the sidecar process to purge unused pages.
+func (c *DeltaClient) ReleaseMemory(ctx context.Context) (*ReleaseMemoryResult, error) {
+	resp, err := c.client.ReleaseMemory(ctx, &deltapb.ReleaseMemoryRequest{})
+	if err != nil {
+		return nil, wrapDeltaError(err)
+	}
+	return &ReleaseMemoryResult{
+		MemoryBefore: fromProtoMemoryStats(resp.MemoryBefore),
+		MemoryAfter:  fromProtoMemoryStats(resp.MemoryAfter),
 	}, nil
 }
 
@@ -257,4 +345,17 @@ func fromProtoCols(cols []*deltapb.ColumnDef) []Column {
 		out[i] = Column{Name: c.Name, Type: c.DataType, Nullable: c.Nullable}
 	}
 	return out
+}
+
+func fromProtoMemoryStats(stats *deltapb.MemoryStats) MemoryStats {
+	if stats == nil {
+		return MemoryStats{}
+	}
+	return MemoryStats{
+		AllocatedBytes: stats.AllocatedBytes,
+		ActiveBytes:    stats.ActiveBytes,
+		ResidentBytes:  stats.ResidentBytes,
+		MappedBytes:    stats.MappedBytes,
+		RetainedBytes:  stats.RetainedBytes,
+	}
 }
